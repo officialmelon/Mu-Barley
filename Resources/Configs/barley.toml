@@ -1,8 +1,11 @@
 [boot_shim]
 requires_kernel_header = true
+# Lenovo LK decompresses and enters the kernel at 0x40080000. Keep that
+# Linux Image header value separate from the relocated UEFI FD destination.
+kernel_header_text_offset = 0x40080000
 
 [uefi_fd]
-base = 0x40080000
+base = 0x4BD00000
 size = 0x200000
 
 [boot_image_kernel]

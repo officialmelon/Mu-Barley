@@ -185,6 +185,13 @@ def compile_boot_shim (boot_shim_config: dict, fd_config: dict) -> bool:
     fd_base = hex (fd_config.get ("base"))
     fd_size = hex (fd_config.get ("size"))
 
+    # The Linux arm64 Image load/header address can differ from the final FD
+    # destination. This is required when LK decompresses the shim at FD_BASE:
+    # copying the appended FD over the executing shim is not safe.
+    kernel_header_text_offset = hex (
+        boot_shim_config.get ("kernel_header_text_offset", fd_config.get ("base"))
+    )
+
     # Get Kernel Header Flag
     requires_kernel_header = boot_shim_config.get ("requires_kernel_header", False)
 
@@ -192,6 +199,7 @@ def compile_boot_shim (boot_shim_config: dict, fd_config: dict) -> bool:
     cmd = [
         "make",
         f"REQUIRES_KERNEL_HEADER={int (requires_kernel_header)}",
+        f"KERNEL_HEADER_TEXT_OFFSET={kernel_header_text_offset}",
         f"FD_BASE={fd_base}",
         f"FD_SIZE={fd_size}"
     ]

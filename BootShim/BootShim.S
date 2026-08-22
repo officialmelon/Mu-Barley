@@ -4,7 +4,7 @@ _Head:
 
 #if REQUIRES_KERNEL_HEADER == 1
 _StackBase:
-  .quad FD_BASE         /* Text Offset */
+  .quad KERNEL_HEADER_TEXT_OFFSET /* Linux arm64 Image text_offset */
 
 _StackSize:
   .quad FD_SIZE         /* Image Size */

@@ -13,7 +13,9 @@
 STATIC EFI_MEMORY_REGION_DESCRIPTOR gBaseMemoryDescriptor[] = {
   // Name, Address, Length, HobOption, ResourceType, ResourceAttribute, MemoryType, ArmAttribute
   {"UEFI Stack",         0x40000000, 0x00040000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK},
-  {"UEFI FD",            0x40080000, 0x00200000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK},
+  // Keep the FD outside LK's 0x40080000 kernel decompression address so the
+  // BootShim never overwrites the instructions it is actively executing.
+  {"UEFI FD",            0x4BD00000, 0x00200000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK},
   // Stable across both live LK mblock captures; used only for the SEC/DXE HOB heap.
   {"DXE Heap",           0x56000000, 0x16000000, AddMem, SYS_MEM, SYS_MEM_CAP, Conv,   WRITE_BACK},
   // Actual LK scanout, not the distinct mblock-17-framebuffer carveout.
@@ -39,7 +41,8 @@ STATIC EFI_MEMORY_REGION_DESCRIPTOR gBaseMemoryDescriptor[] = {
 // Free mblocks stable byte-for-byte across both physical-device captures.
 // Gaps deliberately preserve every LK reservation and transient boot allocation.
 STATIC CONST EFI_MEMORY_REGION_DESCRIPTOR gStableMblocks[] = {
-  {"LK Mblock 02", 0x4BD00000, 0x00380000, AddMem, SYS_MEM, SYS_MEM_CAP, Conv, WRITE_BACK},
+  // The first 2 MiB of the original mblock is now occupied by the relocated FD.
+  {"LK Mblock 02", 0x4BF00000, 0x00180000, AddMem, SYS_MEM, SYS_MEM_CAP, Conv, WRITE_BACK},
   {"LK Mblock 03", 0x4C280000, 0x00180000, AddMem, SYS_MEM, SYS_MEM_CAP, Conv, WRITE_BACK},
   {"LK Mblock 04", 0x4C800000, 0x00600000, AddMem, SYS_MEM, SYS_MEM_CAP, Conv, WRITE_BACK},
   {"LK Mblock 05", 0x4CE60000, 0x001A0000, AddMem, SYS_MEM, SYS_MEM_CAP, Conv, WRITE_BACK},
