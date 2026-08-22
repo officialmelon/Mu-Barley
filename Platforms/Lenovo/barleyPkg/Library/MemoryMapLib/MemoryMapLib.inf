@@ -13,3 +13,8 @@
   ArmPkg/ArmPkg.dec
   MdePkg/MdePkg.dec
   SiliciumPkg/SiliciumPkg.dec
+
+[LibraryClasses]
+  BaseMemoryLib
+  DebugLib
+  FdtLib

@@ -55,4 +55,5 @@
   gMediaTekPkgTokenSpaceGuid.PcdStorageIsEMMC|TRUE
 
 [LibraryClasses]
+  FdtLib|MdePkg/Library/BaseFdtLib/BaseFdtLib.inf
   MemoryMapLib|barleyPkg/Library/MemoryMapLib/MemoryMapLib.inf
