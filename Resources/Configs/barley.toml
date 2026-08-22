@@ -1,0 +1,10 @@
+#
+# UEFI FD configuration
+#
+[uefi_fd]
+base = 0x40080000
+size = 0x200000
+
+# M1 emits a raw payload. Android boot-image packaging is an M2 operation.
+[payload]
+type = "raw"
