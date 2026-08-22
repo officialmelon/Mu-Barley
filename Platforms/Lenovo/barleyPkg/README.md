@@ -19,10 +19,12 @@ On Windows, install the GnuWin32 Make required by Mu's build documentation.
 The Barley build script prefers its standard installation directory and avoids
 passing Windows paths through an unrelated MSYS shell when both are installed.
 
-M1 produces the 2 MiB firmware device at
-`Build/barleyPkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd` and a raw convenience
-copy named `Mu-barley.bin`. Boot-image construction and device execution are M2
-work. Do not flash this M1 image.
+The build produces the 2 MiB firmware device at
+`Build/barleyPkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd`, compiles the upstream
+ARM64 `BootShim`, appends the FD to that executable shim, gzip-compresses the
+combined payload, and places it in an Android boot-image v4 kernel field. The
+result is `Mu-barley.img`. A raw FD by itself is not a valid LK kernel payload.
+Do not flash build artifacts automatically.
 
 ## Hardware evidence and provenance
 
@@ -99,8 +101,10 @@ of those implementations is forked for Barley.
 ## M2 execution gate
 
 The two-capture memory-map gate is complete. Before controlled execution,
-verify framebuffer format/stride, then package the raw AArch64 FD as the kernel
-payload of an Android boot header v4 image so LK loads it at `0x40080000`.
-Preserve Lenovo preloader, ATF, TEE, LK, GPT, and AVB. Prefer non-persistent
+verify framebuffer format/stride. The permanent packaging configuration uses
+the upstream `BootShim.bin + SILICIUM_UEFI.fd` layout, gzip compression matching
+the Lenovo kernel flow, and Android boot header v4. LK starts the shim as its
+kernel; the shim copies the appended 2 MiB FD to `0x40080000` and branches to
+it. Preserve Lenovo preloader, ATF, TEE, LK, GPT, and AVB. Prefer non-persistent
 `fastboot boot` after a separately authorized normal unlock; do not flash a
 slot merely because a fastboot implementation lacks RAM-boot support.
