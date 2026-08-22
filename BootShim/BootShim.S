@@ -24,9 +24,7 @@ _BootShimEntry:
 #if EARLY_VISUAL_TRACE == 1
   /* Stage 1: literal BootShim entry. */
   mov   w7, #1
-  mov   w5, wzr
-  mov   w6, wzr
-  BARLEY_EARLY_VISUAL_TRACE w7, w5, w6
+  bl    _BarleyPstoreTrace
 #endif
 
 _Start:
@@ -38,9 +36,7 @@ _Start:
 #if EARLY_VISUAL_TRACE == 1
   /* Stage 2: immediately before FD relocation. */
   mov   w7, #2
-  mov   w5, wzr
-  mov   w6, wzr
-  BARLEY_EARLY_VISUAL_TRACE w7, w5, w6
+  bl    _BarleyPstoreTrace
 #endif
 
   /* Reload values after the marker's documented scratch-register use. */
@@ -56,15 +52,11 @@ _CopyLoop:
 #if EARLY_VISUAL_TRACE == 1
   /* Stage 3: complete FD copy. */
   mov   w7, #3
-  mov   w5, wzr
-  mov   w6, wzr
-  BARLEY_EARLY_VISUAL_TRACE w7, w5, w6
+  bl    _BarleyPstoreTrace
 
   /* Stage 4: immediately before the FD branch. */
   mov   w7, #4
-  mov   w5, wzr
-  mov   w6, wzr
-  BARLEY_EARLY_VISUAL_TRACE w7, w5, w6
+  bl    _BarleyPstoreTrace
 #endif
 
   ldr   x5, =FD_BASE
@@ -73,6 +65,13 @@ _Entry:
 
 _Dead:
   b     _Dead
+
+#if EARLY_VISUAL_TRACE == 1
+/* One pre-stack leaf implementation shared by all BootShim milestones. */
+_BarleyPstoreTrace:
+  BARLEY_EARLY_VISUAL_TRACE w7, wzr, wzr
+  ret
+#endif
 
 .text
 .align 4
