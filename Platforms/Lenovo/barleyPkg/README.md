@@ -1,6 +1,6 @@
 # Lenovo Tab M11 (TB330XU / Barley)
 
-This package is the conservative M1 Mu-Silicium port for the Lenovo Tab M11
+This package is the Mu-Silicium bring-up port for the Lenovo Tab M11
 LTE, model TB330XU, board `barley_row_lte`. Android's `mt8786` hardware name is
 part of the MT6768/MT6769 BSP family, so the platform deliberately reuses
 `Silicon/MediaTek/MT6768Pkg` rather than introducing a parallel silicon package.
@@ -31,7 +31,8 @@ Do not flash build artifacts automatically.
 | Constant or decision | Source | Status |
 | --- | --- | --- |
 | MT6768 silicon package | Android `ro.board.platform`, Barley DT compatibles, MMIO comparison | VERIFIED |
-| `0x40080000` payload / FD base | Lenovo vendor boot v4 header; matches lancelot | VERIFIED |
+| `0x40080000` LK kernel entry / BootShim base | Physical LK execution log | VERIFIED |
+| `0x4BD00000` relocated FD base | M2.7/M2.8 physical execution and residency tests | VERIFIED |
 | 2 MiB FD size | Existing MT6768/lancelot firmware layout | REUSED MT6768 CONSTANT |
 | GICD `0x0C000000`, size `0x40000` | Barley DT and MT6768 package | VERIFIED MATCH |
 | GICR `0x0C040000`, size `0x200000` | Barley DT and MT6768 package | VERIFIED MATCH |
@@ -40,10 +41,11 @@ Do not flash build artifacts automatically.
 | MSDC1 `0x11240000`, size `0x10000`, GSI 133 | Barley DT and MT6768 package | VERIFIED MATCH |
 | eMMC GPIO 122-133 mapping | Barley DT and MT6768 `MsdcImplLib` | VERIFIED MATCH |
 | microSD GPIO 161-164, 170-171 mapping | Barley DT and MT6768 `MsdcImplLib` | VERIFIED MATCH |
-| framebuffer base `0x7E605000` | Lenovo LK/boot framebuffer evidence | VERIFIED |
-| framebuffer allocation `0x017E8000` | Lenovo reserved-memory evidence | VERIFIED |
+| logo decompression output `0x7A3F8000`, size `0x008CA000` | Physical LK expdb (`out`, `have`) | VERIFIED |
+| OVL framebuffer `0x7BCE0000`, size `0x01F20000` | Physical LK expdb and reserved-memory | VERIFIED |
+| distinct display allocation `0x7E605000`, size `0x017E8000` | Lenovo reserved-memory evidence | VERIFIED |
 | native panel 1200 x 1920 | active `hx83102j_dsi_vdo_boe` selection and runtime display | VERIFIED |
-| 32-bit BGRX and 1200 pixels/scanline | Existing `SimpleFbDxe` contract | PROVISIONAL |
+| OVL format `eBGRA8888`, live pitches 4800/4864 | Physical LK expdb layer configuration | VERIFIED |
 | stack `0x40000000..0x4003FFFF` | Both live LK `mblock_info` captures, mblock 0 | VERIFIED STABLE |
 | DXE heap `0x56000000..0x6BFFFFFF` | Both live LK `mblock_info` captures, mblock 7 | VERIFIED STABLE |
 | one continuous 8 GiB region from `0x40000000` | No valid source; conflicts with dynamic mblock carveouts | INVALID — NOT USED |
@@ -74,13 +76,16 @@ implementation fails closed and does not add the other broad mblocks.
 `RamManagerDxe` remains excluded because it would flatten the physical 8 GiB
 range into one unsafe allocation.
 
-The framebuffer is exposed through the existing inherited `SimpleFbDxe` path;
-M1 does not initialize DSI or the panel. The physical allocation is verified,
-but pixel format, orientation, and pixels-per-scanline must be confirmed before
-a display test. The current 1200 x 1920 x 32 configuration is explicitly
-provisional. Actual scanout at `0x7E605000 + 0x017E8000` remains distinct from
-`mblock-17-framebuffer` at `0x7BCE0000 + 0x01F20000`. LK free mblock 11 is
-omitted because it overlaps the independent scanout allocation.
+`BarleyLkGopDxe` wraps the display pipeline already configured by Lenovo LK; it
+does not initialize DSI, reset the panel, or change clocks/timings. At entry it
+reads the MT6768 OVL0, OVL0_2L, and RDMA0 configuration, derives enabled source
+addresses and pitch, and mirrors GOP BLTs to every valid live source plus the
+two diagnostic surfaces at `0x7A3F8000` and `0x7E605000`. LK expdb proves the
+handoff is OVL direct-link mode with `eBGRA8888`, 1200 x 1920 layers and pitches
+of 4800/4864 bytes. Observed OVL addresses include `0x7BCE0000`, `0x7C5C8000`,
+and `0x7CEB0000`; the 4864-byte-pitch surfaces are spaced by `0x008E8000`.
+`LK Framebuffer`, `LK Logo Surface`, and `Display Reserved` remain separate
+reserved descriptors. LK free mblock 11 remains omitted.
 
 Buttons are intentionally omitted. Android evidence shows power and
 volume-down on `mtk-pmic-keys`, while volume-up is on `mtk-kpd`. Lancelot's
@@ -95,7 +100,7 @@ single-core boot exists.
 
 The port reuses `PlatformSecLib`, `GpioImplLib`, `ClockImplLib`,
 `PmicWrapperImplLib`, and `MsdcImplLib`, plus the shared GPIO, clock, PMIC
-wrapper, MT6358 PMIC, MSDC, eMMC, SD, and simple-framebuffer DXE drivers. None
+wrapper, MT6358 PMIC, MSDC, eMMC, and SD DXE drivers. None
 of those implementations is forked for Barley.
 
 ## M2 execution gate
@@ -104,7 +109,9 @@ The two-capture memory-map gate is complete. Before controlled execution,
 verify framebuffer format/stride. The permanent packaging configuration uses
 the upstream `BootShim.bin + SILICIUM_UEFI.fd` layout, gzip compression matching
 the Lenovo kernel flow, and Android boot header v4. LK starts the shim as its
-kernel; the shim copies the appended 2 MiB FD to `0x40080000` and branches to
-it. Preserve Lenovo preloader, ATF, TEE, LK, GPT, and AVB. Prefer non-persistent
-`fastboot boot` after a separately authorized normal unlock; do not flash a
-slot merely because a fastboot implementation lacks RAM-boot support.
+kernel; the shim copies the appended 2 MiB FD to `0x4BD00000` and branches to
+it while preserving incoming `x0`. The FV-resident internal Shell is the M2.9
+default application after GraphicsConsole connects to `BarleyLkGopDxe`.
+Preserve Lenovo preloader, ATF, TEE, LK, GPT, vendor_boot, and slot B. Physical
+testing is restricted to the already-proven `boot_a` test / `boot_b` recovery
+flow on the unlocked device.

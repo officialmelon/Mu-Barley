@@ -1,6 +1,7 @@
 APRIORI DXE {
   INF MdeModulePkg/Core/Dxe/DxeMain.inf
   INF barleyPkg/Drivers/EarlyVisualTraceDxe/EarlyVisualTraceDxe.inf
+  INF barleyPkg/Drivers/BarleyLkGopDxe/BarleyLkGopDxe.inf
   INF MdeModulePkg/Universal/PCD/Dxe/Pcd.inf
 
   INF MdeModulePkg/Universal/ReportStatusCodeRouter/RuntimeDxe/ReportStatusCodeRouterRuntimeDxe.inf

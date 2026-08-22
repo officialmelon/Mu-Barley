@@ -20,7 +20,11 @@ STATIC EFI_MEMORY_REGION_DESCRIPTOR gBaseMemoryDescriptor[] = {
   {"UEFI FD",            0x4BD00000, 0x00200000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK},
   // Stable across both live LK mblock captures; used only for the SEC/DXE HOB heap.
   {"DXE Heap",           0x56000000, 0x16000000, AddMem, SYS_MEM, SYS_MEM_CAP, Conv,   WRITE_BACK},
-  // Actual LK scanout, not the distinct mblock-17-framebuffer carveout.
+  // LK's logo decompression output; the logged allocation is pitch-aligned.
+  {"LK Logo Surface",    0x7A3F8000, 0x008E8000, AddMem, MEM_RES, SYS_MEM_CAP, Reserv, WRITE_THROUGH},
+  // LK direct-link OVL backing store. Logs show three 0x008E8000-spaced surfaces.
+  {"LK Framebuffer",     0x7BCE0000, 0x01F20000, AddMem, MEM_RES, SYS_MEM_CAP, Reserv, WRITE_THROUGH},
+  // Distinct FDT display allocation retained from M2.8; not claimed as scanout.
   {"Display Reserved",   0x7E605000, 0x017E8000, AddMem, MEM_RES, SYS_MEM_CAP, Reserv, WRITE_THROUGH},
 
   // MT6768 register regions verified against Barley firmware/device-tree evidence.
@@ -37,7 +41,11 @@ STATIC EFI_MEMORY_REGION_DESCRIPTOR gBaseMemoryDescriptor[] = {
   {"MSDC-1",             0x11240000, 0x00010000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
   {"MSDC Top-0",         0x11C90000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
   {"MSDC Top-1",         0x11CD0000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
-  {"Display OVL",        0x1400B000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE}
+  {"Display MMSYS",      0x14000000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
+  {"Display OVL0",       0x1400B000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
+  {"Display OVL0 2L",    0x1400C000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
+  {"Display RDMA0",      0x1400D000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
+  {"Display DSI0",       0x14014000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE}
 };
 
 // Free mblocks stable byte-for-byte across both physical-device captures.

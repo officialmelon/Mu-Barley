@@ -8,16 +8,16 @@ ASM_FUNC (BarleyEarlyVisualTrace)
 
 ASM_FUNC (BarleyTraceFdResetVector)
   mov   w7, #4
-  movz  w5, #0xFFFF
-  movk  w5, #0x00FF, lsl #16
-  mov   w6, w5
+  mov   w5, wzr
+  movz  w6, #0xFFFF
+  movk  w6, #0x00FF, lsl #16
   BARLEY_EARLY_VISUAL_TRACE w7, w5, w6
   ret
 
 ASM_FUNC (BarleyTraceSecModuleEntry)
   mov   w7, #5
-  movz  w5, #0x00FF
+  movz  w5, #0xFFFF
   movk  w5, #0x00FF, lsl #16
-  mov   w6, w5
+  mov   w6, wzr
   BARLEY_EARLY_VISUAL_TRACE w7, w5, w6
   ret

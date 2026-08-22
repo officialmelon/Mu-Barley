@@ -1,0 +1,35 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = BarleyLkGopDxe
+  FILE_GUID                      = A6B0FF39-38EE-49C0-9E1D-C4DD96114D93
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = BarleyLkGopDxeEntryPoint
+
+[Sources]
+  BarleyLkGopDxe.c
+
+[Packages]
+  ArmPkg/ArmPkg.dec
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+  barleyPkg/barley.dec
+
+[LibraryClasses]
+  BaseMemoryLib
+  ArmLib
+  CacheMaintenanceLib
+  DebugLib
+  FrameBufferBltLib
+  IoLib
+  MemoryAllocationLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+
+[Protocols]
+  gEfiDevicePathProtocolGuid
+  gEfiGraphicsOutputProtocolGuid
+
+[Depex]
+  TRUE

@@ -40,6 +40,8 @@ READ_LOCK_STATUS   = TRUE
   !include Include/APRIORI.inc
   !include Include/DXE.inc
 
+  INF ShellPkg/Application/Shell/Shell.inf
+
   # Do not include RamManagerDxe until Barley's final LK mblock map is known.
 
   INF MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf

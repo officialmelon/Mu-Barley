@@ -14,7 +14,7 @@
   BUILD_TARGETS                  = RELEASE|DEBUG
   SKUID_IDENTIFIER               = DEFAULT
   FLASH_DEFINITION               = barleyPkg/barley.fdf
-  USE_CUSTOM_DISPLAY_DRIVER      = 0
+  USE_CUSTOM_DISPLAY_DRIVER      = 1
 
   # MT6769H / MT8786 (Helio G88), using the MT6768 BSP architecture.
   SOC_TYPE                       = 2
@@ -61,6 +61,20 @@
 [LibraryClasses]
   FdtLib|MdePkg/Library/BaseFdtLib/BaseFdtLib.inf
   MemoryMapLib|barleyPkg/Library/MemoryMapLib/MemoryMapLib.inf
+  ShellLib|ShellPkg/Library/UefiShellLib/UefiShellLib.inf
+  ShellCommandLib|ShellPkg/Library/UefiShellCommandLib/UefiShellCommandLib.inf
+  HandleParsingLib|ShellPkg/Library/UefiHandleParsingLib/UefiHandleParsingLib.inf
+  OrderedCollectionLib|MdePkg/Library/BaseOrderedCollectionRedBlackTreeLib/BaseOrderedCollectionRedBlackTreeLib.inf
 
 [Components]
   barleyPkg/Drivers/EarlyVisualTraceDxe/EarlyVisualTraceDxe.inf
+  barleyPkg/Drivers/BarleyLkGopDxe/BarleyLkGopDxe.inf
+
+  ShellPkg/Application/Shell/Shell.inf {
+    <PcdsFixedAtBuild>
+      gEfiShellPkgTokenSpaceGuid.PcdShellLibAutoInitialize|FALSE
+    <LibraryClasses>
+      NULL|ShellPkg/Library/UefiShellLevel2CommandsLib/UefiShellLevel2CommandsLib.inf
+      NULL|ShellPkg/Library/UefiShellLevel1CommandsLib/UefiShellLevel1CommandsLib.inf
+      NULL|ShellPkg/Library/UefiShellLevel3CommandsLib/UefiShellLevel3CommandsLib.inf
+  }

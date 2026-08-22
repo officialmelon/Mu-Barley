@@ -100,6 +100,9 @@ PlatformBootManagerAfterConsole ()
 {
   EFI_STATUS                    Status      = EFI_SUCCESS;
   EFI_GRAPHICS_OUTPUT_PROTOCOL *GopProtocol = NULL;
+#if BARLEY_STAGE_TRACE == 1
+  EFI_BOOT_MANAGER_LOAD_OPTION  ShellOption = {0};
+#endif
 
   // Post Setup GOP
   PostGopSetup (&GopProtocol);
@@ -124,6 +127,16 @@ PlatformBootManagerAfterConsole ()
 
   // Execute Secondary After Console
   DeviceBootManagerAfterConsole ();
+
+#if BARLEY_STAGE_TRACE == 1
+  // Barley M2.9 is a display bring-up image: launch the FV-resident shell first.
+  Print (L"Barley M2.9: Lenovo LK live-scanout GOP connected\r\n");
+  Status = MsBootOptionsLibGetDefaultBootApp (&ShellOption, NULL);
+  if (!EFI_ERROR (Status)) {
+    EfiBootManagerBoot (&ShellOption);
+    EfiBootManagerFreeLoadOption (&ShellOption);
+  }
+#endif
 }
 
 VOID
