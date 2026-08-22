@@ -1,6 +1,6 @@
-/* M2.13 stackless execution-stage marker: one 256x256 LK logo block. */
-#define BARLEY_TRACE_BASE       0x7A3F8000
-#define BARLEY_TRACE_PITCH      4800
+/* M2.13.1 stackless trace: isolate LK's full-screen OVL FB2 surface. */
+#define BARLEY_TRACE_BASE       0x7CEB0000
+#define BARLEY_TRACE_PITCH      4864
 #define BARLEY_TRACE_DIMENSION  256
 #define BARLEY_TRACE_DIAG_BASE  0x7FDEC000
 
@@ -26,10 +26,10 @@
   str   x0, [x8, #0x20]
 
   /* Clear the complete marker block to opaque black. */
-  movz  x8, #0x8000
-  movk  x8, #0x7A3F, lsl #16
+  movz  x8, #0x0000
+  movk  x8, #0x7CEB, lsl #16
   mov   x10, x8
-  mov   x15, #4800
+  mov   x15, #4864
   mov   x9, #256
   mov   w17, wzr
   movk  w17, #0xFF00, lsl #16       /* 0xFF000000 */
@@ -52,8 +52,8 @@
 .LBarleyTraceVerticalNext\@:
   cmp   x14, x18
   b.hs  .LBarleyTraceHorizontalStart\@
-  movz  x10, #0x8000
-  movk  x10, #0x7A3F, lsl #16
+  movz  x10, #0x0000
+  movk  x10, #0x7CEB, lsl #16
   add   x10, x10, x14, lsl #6
   mov   x9, #192
 .LBarleyTraceVerticalRow\@:
@@ -77,8 +77,8 @@
   mov   x10, #208
   add   x10, x10, x14, lsl #4
   mul   x10, x10, x15
-  movz  x11, #0x8000
-  movk  x11, #0x7A3F, lsl #16
+  movz  x11, #0x0000
+  movk  x11, #0x7CEB, lsl #16
   add   x10, x10, x11
   mov   x9, #8
 .LBarleyTraceHorizontalRow\@:
@@ -118,11 +118,11 @@
   lsl   x16, x17, x16
   sub   x17, x16, #1
 
-  movz  x8, #0x8000
-  movk  x8, #0x7A3F, lsl #16
+  movz  x8, #0x0000
+  movk  x8, #0x7CEB, lsl #16
   bic   x8, x8, x17
-  movz  x9, #0x4000
-  movk  x9, #0x7A52, lsl #16        /* base + 4800 * 256 */
+  movz  x9, #0x0000
+  movk  x9, #0x7CFE, lsl #16        /* base + 4864 * 256 */
 .LBarleyTraceCacheLoop\@:
   dc    cvac, x8
   add   x8, x8, x16
