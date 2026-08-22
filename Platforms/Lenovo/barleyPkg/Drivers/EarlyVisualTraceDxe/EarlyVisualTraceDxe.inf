@@ -1,0 +1,23 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = EarlyVisualTraceDxe
+  FILE_GUID                      = A7CE3322-E5F8-45ED-B693-2A7484D0CD5C
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = EarlyVisualTraceDxeEntryPoint
+
+[Sources]
+  EarlyVisualTraceDxe.c
+
+[Sources.AArch64]
+  AArch64/EarlyVisualTrace.S
+
+[Packages]
+  MdePkg/MdePkg.dec
+  barleyPkg/barley.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+
+[Depex]
+  TRUE

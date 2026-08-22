@@ -3,3 +3,12 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause-Patent
 ##
+
+[Defines]
+  DEC_SPECIFICATION              = 0x00010005
+  PACKAGE_NAME                   = barleyPkg
+  PACKAGE_GUID                   = 1D10B4F6-0723-46E7-98D0-7FC8A491B5E8
+  PACKAGE_VERSION                = 0.1
+
+[Includes]
+  Include

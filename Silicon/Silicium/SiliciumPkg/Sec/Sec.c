@@ -18,6 +18,16 @@
 
 #include "Sec.h"
 
+#if BARLEY_STAGE_TRACE == 1
+VOID
+EFIAPI
+BarleyEarlyVisualTrace (
+  IN UINT32 Stage,
+  IN UINT32 PatternA,
+  IN UINT32 PatternB
+  );
+#endif
+
 #ifndef MDEPKG_NDEBUG
 STATIC
 VOID
@@ -142,6 +152,9 @@ SecMain (
   }
 
   // Load DXE Core
+#if BARLEY_STAGE_TRACE == 1
+  BarleyEarlyVisualTrace (0x09, 0x0000FFFF, 0x00FF0000);
+#endif
   Status = LoadDxeCoreFromFv (NULL, 0);
   if (EFI_ERROR (Status)) {
     DEBUG ((EFI_D_ERROR, "Failed to Load DXE Core! Status = %r\n", Status));

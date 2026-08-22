@@ -9,6 +9,16 @@
 
 #include "PlatformRegisters.h"
 
+#if BARLEY_STAGE_TRACE == 1
+VOID
+EFIAPI
+BarleyEarlyVisualTrace (
+  IN UINT32 Stage,
+  IN UINT32 PatternA,
+  IN UINT32 PatternB
+  );
+#endif
+
 VOID
 DisableWatchDogTimer ()
 {
@@ -44,6 +54,11 @@ EnableConstantBlending ()
 VOID
 PlatformInitialize ()
 {
+#if BARLEY_STAGE_TRACE == 1
+  // First C-level platform marker; watchdog/display initialization follows.
+  BarleyEarlyVisualTrace (0x06, 0x0000FFFF, 0x0000FFFF);
+#endif
+
   // Disable WatchDog Timer
   DisableWatchDogTimer ();
 

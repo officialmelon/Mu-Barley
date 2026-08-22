@@ -9,10 +9,14 @@
 [Sources]
   MemoryMapLib.c
 
+[Sources.AArch64]
+  AArch64/EarlyVisualTrace.S
+
 [Packages]
   ArmPkg/ArmPkg.dec
   MdePkg/MdePkg.dec
   SiliciumPkg/SiliciumPkg.dec
+  barleyPkg/barley.dec
 
 [LibraryClasses]
   BaseMemoryLib

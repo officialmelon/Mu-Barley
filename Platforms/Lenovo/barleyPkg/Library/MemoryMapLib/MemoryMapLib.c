@@ -3,6 +3,8 @@
 #include <Library/FdtLib.h>
 #include <Library/MemoryMapLib.h>
 
+#include <BarleyEarlyVisualTrace.h>
+
 #define BARLEY_LIVE_FDT_BASE       0x4BC80000ULL
 #define BARLEY_LIVE_FDT_MAX_SIZE   0x00080000U
 #define BARLEY_DRAM_BASE           0x40000000ULL
@@ -207,13 +209,27 @@ GetMemoryMap (
   )
 {
   if (!gMemoryMapInitialized) {
+    BOOLEAN LiveFdtValid;
+
     CopyMem (gMemoryDescriptor, gBaseMemoryDescriptor, sizeof (gBaseMemoryDescriptor));
     gMemoryDescriptorCount = ARRAY_SIZE (gBaseMemoryDescriptor);
 
     // Fail closed: add broad usable RAM only after the live LK FDT agrees with
     // both captures. The stack, FD, stable DXE heap, and MMIO remain available
     // for diagnostics if validation fails.
-    if (ValidateLiveFdt ()) {
+    BarleyEarlyVisualTrace (
+      BARLEY_TRACE_STAGE_BEFORE_MEMORY_MAP,
+      BARLEY_TRACE_BEFORE_MEMORY_MAP_A,
+      BARLEY_TRACE_BEFORE_MEMORY_MAP_B
+      );
+    LiveFdtValid = ValidateLiveFdt ();
+    BarleyEarlyVisualTrace (
+      BARLEY_TRACE_STAGE_AFTER_MEMORY_MAP,
+      BARLEY_TRACE_AFTER_MEMORY_MAP_A,
+      BARLEY_TRACE_AFTER_MEMORY_MAP_B
+      );
+
+    if (LiveFdtValid) {
       CopyMem (
         &gMemoryDescriptor[gMemoryDescriptorCount],
         gStableMblocks,

@@ -21,6 +21,10 @@
 
 !include MT6768Pkg/MT6768Pkg.dsc.inc
 
+[BuildOptions]
+  *_CLANGPDB_AARCH64_CC_FLAGS = -D BARLEY_STAGE_TRACE=1
+  *_CLANGPDB_AARCH64_PP_FLAGS = -D BARLEY_STAGE_TRACE=1
+
 [PcdsFixedAtBuild]
   #
   # DDR Memory
@@ -57,3 +61,6 @@
 [LibraryClasses]
   FdtLib|MdePkg/Library/BaseFdtLib/BaseFdtLib.inf
   MemoryMapLib|barleyPkg/Library/MemoryMapLib/MemoryMapLib.inf
+
+[Components]
+  barleyPkg/Drivers/EarlyVisualTraceDxe/EarlyVisualTraceDxe.inf

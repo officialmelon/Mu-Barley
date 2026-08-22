@@ -13,6 +13,13 @@
 .set CTRL_SPAN_BIT, BIT23
 
 ASM_FUNC (_ModuleEntryPoint)
+#if BARLEY_STAGE_TRACE == 1
+  // The FD offset-0 reset branch lands here. These are the first operations
+  // before platform assembly initialization or any C runtime dependency.
+  bl    ASM_PFX (BarleyTraceFdResetVector)
+  bl    ASM_PFX (BarleyTraceSecModuleEntry)
+#endif
+
   // Do Platform Specific Initialization
   bl    ASM_PFX (PlatformAssemblyInitialize)
 

@@ -1,4 +1,5 @@
   INF MdeModulePkg/Core/Dxe/DxeMain.inf
+  INF barleyPkg/Drivers/EarlyVisualTraceDxe/EarlyVisualTraceDxe.inf
   INF MdeModulePkg/Universal/PCD/Dxe/Pcd.inf
   INF ArmPkg/Drivers/CpuDxe/CpuDxe.inf
   INF MdeModulePkg/Core/RuntimeDxe/RuntimeDxe.inf

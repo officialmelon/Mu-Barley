@@ -194,6 +194,7 @@ def compile_boot_shim (boot_shim_config: dict, fd_config: dict) -> bool:
 
     # Get Kernel Header Flag
     requires_kernel_header = boot_shim_config.get ("requires_kernel_header", False)
+    early_visual_trace = boot_shim_config.get ("early_visual_trace", False)
 
     # Set Compile Command
     cmd = [
@@ -201,7 +202,8 @@ def compile_boot_shim (boot_shim_config: dict, fd_config: dict) -> bool:
         f"REQUIRES_KERNEL_HEADER={int (requires_kernel_header)}",
         f"KERNEL_HEADER_TEXT_OFFSET={kernel_header_text_offset}",
         f"FD_BASE={fd_base}",
-        f"FD_SIZE={fd_size}"
+        f"FD_SIZE={fd_size}",
+        f"EARLY_VISUAL_TRACE={int (early_visual_trace)}"
     ]
 
     # Compile Boot Shim
