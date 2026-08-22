@@ -10,7 +10,8 @@ _Head:
 _StackBase:
   .quad KERNEL_HEADER_TEXT_OFFSET
 _StackSize:
-  .quad FD_SIZE
+  /* ARM64 Image size covers the executable shim and its appended FD. */
+  .quad (_Payload - _Head) + FD_SIZE
   .quad 0
   .quad 0
   .quad 0
