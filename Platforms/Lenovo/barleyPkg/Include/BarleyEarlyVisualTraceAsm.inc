@@ -1,146 +1,65 @@
-/* M2.13.1 stackless trace: isolate LK's full-screen OVL FB2 surface. */
-#define BARLEY_TRACE_BASE       0x7CEB0000
-#define BARLEY_TRACE_PITCH      4864
-#define BARLEY_TRACE_DIMENSION  256
-#define BARLEY_TRACE_DIAG_BASE  0x7FDEC000
+/* M2.14 stackless execution trace in Lenovo's persistent ramoops console. */
+#define BARLEY_PSTORE_CONSOLE_BASE  0x4D02F000
+#define BARLEY_PSTORE_RECORD_SIZE   40
 
 .macro BARLEY_EARLY_VISUAL_TRACE stage_reg, pattern_a_reg, pattern_b_reg
-  /* Leaf body: caller-saved x8-x18 only; incoming x0 is never modified. */
+  /*
+   * The Linux 6.6 persistent-RAM header is:
+   *   u32 signature, atomic_t start, atomic_t size, u8 data[]
+   * Lenovo's live parameters place the console zone at 0x4D02F000.
+   * This leaf body uses only caller-saved x8-x18 and preserves incoming x0.
+   */
   mrs   x12, CurrentEL
   mrs   x13, SCTLR_EL1
   mrs   x14, DAIF
 
-  movz  x8, #0xC000
-  movk  x8, #0x7FDE, lsl #16
-  movz  w17, #0x3231
-  movk  w17, #0x334D, lsl #16       /* "M312" */
-  str   w17, [x8, #0x00]
-  str   \stage_reg, [x8, #0x04]
-  str   w12, [x8, #0x08]
-  str   w13, [x8, #0x0C]
+  movz  x8, #0xF000
+  movk  x8, #0x4D02, lsl #16
+
+  /* BARLEY_PSTORE_TRACE_RECORD begins at persistent_ram_buffer.data. */
+  movz  w17, #0x5442
+  movk  w17, #0x4352, lsl #16       /* "BTRC" */
+  str   w17, [x8, #12]
+  movz  w17, #0x1400
+  movk  w17, #0x0002, lsl #16       /* version 0x00021400 */
+  str   w17, [x8, #16]
+  str   \stage_reg, [x8, #20]
+  str   w12, [x8, #24]
+  str   w13, [x8, #28]
   lsr   x15, x13, #32
-  str   w15, [x8, #0x10]
-  str   w14, [x8, #0x14]
+  str   w15, [x8, #32]
+  str   w14, [x8, #36]
   lsr   x15, x14, #32
-  str   w15, [x8, #0x18]
-  str   x0, [x8, #0x20]
+  str   w15, [x8, #40]
+  str   x0, [x8, #44]
 
-  /* Clear the complete marker block to opaque black. */
-  movz  x8, #0x0000
-  movk  x8, #0x7CEB, lsl #16
-  mov   x10, x8
-  mov   x15, #4864
-  mov   x9, #256
-  mov   w17, wzr
-  movk  w17, #0xFF00, lsl #16       /* 0xFF000000 */
-.LBarleyTraceClearRow\@:
-  mov   x11, x10
-  mov   x16, #128
-.LBarleyTraceClearPixel\@:
-  stp   w17, w17, [x11], #8
-  subs  x16, x16, #1
-  b.ne  .LBarleyTraceClearPixel\@
-  add   x10, x10, x15
-  subs  x9, x9, #1
-  b.ne  .LBarleyTraceClearRow\@
+  /* Publish start/size before the signature, so partial records are invalid. */
+  mov   w17, #40
+  str   w17, [x8, #4]
+  str   w17, [x8, #8]
+  movz  w17, #0x4244
+  movk  w17, #0x4347, lsl #16       /* Linux PERSISTENT_RAM_SIG "DBGC" */
+  str   w17, [x8, #0]
 
-  /* Stage N is N eight-pixel vertical bars separated by eight pixels. */
-  movz  w17, #0xFFFF
-  movk  w17, #0xFFFF, lsl #16       /* 0xFFFFFFFF */
-  uxtw  x18, \stage_reg
-  mov   x14, xzr
-.LBarleyTraceVerticalNext\@:
-  cmp   x14, x18
-  b.hs  .LBarleyTraceHorizontalStart\@
-  movz  x10, #0x0000
-  movk  x10, #0x7CEB, lsl #16
-  add   x10, x10, x14, lsl #6
-  mov   x9, #192
-.LBarleyTraceVerticalRow\@:
-  stp   w17, w17, [x10, #0]
-  stp   w17, w17, [x10, #8]
-  stp   w17, w17, [x10, #16]
-  stp   w17, w17, [x10, #24]
-  add   x10, x10, x15
-  subs  x9, x9, #1
-  b.ne  .LBarleyTraceVerticalRow\@
-  add   x14, x14, #1
-  b     .LBarleyTraceVerticalNext\@
-
-  /* CurrentEL/4 horizontal bars occupy rows 208..255. */
-.LBarleyTraceHorizontalStart\@:
-  ubfx  x18, x12, #2, #2
-  mov   x14, xzr
-.LBarleyTraceHorizontalNext\@:
-  cmp   x14, x18
-  b.hs  .LBarleyTraceStoresDone\@
-  mov   x10, #208
-  add   x10, x10, x14, lsl #4
-  mul   x10, x10, x15
-  movz  x11, #0x0000
-  movk  x11, #0x7CEB, lsl #16
-  add   x10, x10, x11
-  mov   x9, #8
-.LBarleyTraceHorizontalRow\@:
-  mov   x11, x10
-  mov   x16, #128
-.LBarleyTraceHorizontalPixel\@:
-  stp   w17, w17, [x11], #8
-  subs  x16, x16, #1
-  b.ne  .LBarleyTraceHorizontalPixel\@
-  add   x10, x10, x15
-  subs  x9, x9, #1
-  b.ne  .LBarleyTraceHorizontalRow\@
-  add   x14, x14, #1
-  b     .LBarleyTraceHorizontalNext\@
-
-.LBarleyTraceStoresDone\@:
   dsb   sy
 
-  /* Retain M2.9's cache-state gate and dc cvac clean-to-PoC operation. */
+  /* Match the proven CurrentEL-gated cache clean used by the prior trace. */
   and   x15, x12, #0xC
   cmp   x15, #0xC
-  b.eq  .LBarleyTraceReadEl3\@
+  b.eq  .LBarleyPstoreReadEl3\@
   cmp   x15, #0x8
-  b.eq  .LBarleyTraceReadEl2\@
+  b.eq  .LBarleyPstoreReadEl2\@
   mrs   x15, SCTLR_EL1
-  b     .LBarleyTraceCacheState\@
-.LBarleyTraceReadEl2\@:
+  b     .LBarleyPstoreCacheState\@
+.LBarleyPstoreReadEl2\@:
   mrs   x15, SCTLR_EL2
-  b     .LBarleyTraceCacheState\@
-.LBarleyTraceReadEl3\@:
+  b     .LBarleyPstoreCacheState\@
+.LBarleyPstoreReadEl3\@:
   mrs   x15, SCTLR_EL3
-.LBarleyTraceCacheState\@:
-  tbz   x15, #2, .LBarleyTraceCacheDone\@
-  mrs   x16, CTR_EL0
-  ubfx  x16, x16, #16, #4
-  mov   x17, #4
-  lsl   x16, x17, x16
-  sub   x17, x16, #1
-
-  movz  x8, #0x0000
-  movk  x8, #0x7CEB, lsl #16
-  bic   x8, x8, x17
-  movz  x9, #0x0000
-  movk  x9, #0x7CFE, lsl #16        /* base + 4864 * 256 */
-.LBarleyTraceCacheLoop\@:
+.LBarleyPstoreCacheState\@:
+  tbz   x15, #2, .LBarleyPstoreCacheDone\@
   dc    cvac, x8
-  add   x8, x8, x16
-  cmp   x8, x9
-  b.lo  .LBarleyTraceCacheLoop\@
-
-  movz  x8, #0xC000
-  movk  x8, #0x7FDE, lsl #16
-  bic   x8, x8, x17
-  movz  x9, #0xD000
-  movk  x9, #0x7FDE, lsl #16
-.LBarleyTraceDiagCacheLoop\@:
-  dc    cvac, x8
-  add   x8, x8, x16
-  cmp   x8, x9
-  b.lo  .LBarleyTraceDiagCacheLoop\@
-
-.LBarleyTraceCacheDone\@:
+.LBarleyPstoreCacheDone\@:
   dsb   sy
   isb
 .endm
