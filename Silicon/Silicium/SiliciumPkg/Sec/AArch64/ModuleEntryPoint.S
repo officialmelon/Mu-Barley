@@ -22,6 +22,9 @@ ASM_FUNC (_ModuleEntryPoint)
 
   // Do Platform Specific Initialization
   bl    ASM_PFX (PlatformAssemblyInitialize)
+#if BARLEY_STAGE_TRACE == 1
+  bl    ASM_PFX (BarleyTraceAfterPlatformAssemblyInitialize)
+#endif
 
   // Disable SPAN
   EL1_OR_EL2 (x0)

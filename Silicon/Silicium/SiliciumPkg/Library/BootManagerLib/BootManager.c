@@ -23,6 +23,16 @@
 
 #include "BootManager.h"
 
+#if BARLEY_STAGE_TRACE == 1
+VOID
+EFIAPI
+BarleyEarlyVisualTrace (
+  IN UINT32 Stage,
+  IN UINT32 PatternA,
+  IN UINT32 PatternB
+  );
+#endif
+
 //
 // Global Variables
 //
@@ -129,10 +139,18 @@ PlatformBootManagerAfterConsole ()
   DeviceBootManagerAfterConsole ();
 
 #if BARLEY_STAGE_TRACE == 1
-  // Barley M2.9 is a display bring-up image: launch the FV-resident shell first.
-  Print (L"Barley M2.9: Lenovo LK live-scanout GOP connected\r\n");
+  // Mark stage 13 only after the installed ConOut accepts an OutputString.
+  if ((gST->ConOut != NULL) &&
+      !EFI_ERROR (gST->ConOut->OutputString (
+                                  gST->ConOut,
+                                  L"Barley M2.13 execution trace\r\n"
+                                  )))
+  {
+    BarleyEarlyVisualTrace (13, 0, 0);
+  }
   Status = MsBootOptionsLibGetDefaultBootApp (&ShellOption, NULL);
   if (!EFI_ERROR (Status)) {
+    BarleyEarlyVisualTrace (14, 0, 0);
     EfiBootManagerBoot (&ShellOption);
     EfiBootManagerFreeLoadOption (&ShellOption);
   }

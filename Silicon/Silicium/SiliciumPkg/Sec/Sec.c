@@ -128,6 +128,9 @@ SecMain (
   if (EFI_ERROR (Status)) {
     return;
   }
+#if BARLEY_STAGE_TRACE == 1
+  BarleyEarlyVisualTrace (9, 0, 0);
+#endif
 
   // Build CPU HOB
   BuildCpuHob (ArmGetPhysicalAddressBits (), PcdGet8 (PcdPrePiCpuIoSize));
@@ -153,7 +156,7 @@ SecMain (
 
   // Load DXE Core
 #if BARLEY_STAGE_TRACE == 1
-  BarleyEarlyVisualTrace (0x09, 0x0000FFFF, 0x00FF0000);
+  BarleyEarlyVisualTrace (10, 0, 0);
 #endif
   Status = LoadDxeCoreFromFv (NULL, 0);
   if (EFI_ERROR (Status)) {
@@ -166,6 +169,11 @@ SecEntry (
   IN UINTN StackBase,
   IN UINTN StackSize)
 {
+#if BARLEY_STAGE_TRACE == 1
+  /* Stage 8: C entry is reached only after the SEC stack is established. */
+  BarleyEarlyVisualTrace (8, 0, 0);
+#endif
+
   // Disable Data Cache
   ArmDisableDataCache ();
 

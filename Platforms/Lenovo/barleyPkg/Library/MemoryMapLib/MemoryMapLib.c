@@ -225,17 +225,7 @@ GetMemoryMap (
     // Fail closed: add broad usable RAM only after the live LK FDT agrees with
     // both captures. The stack, FD, stable DXE heap, and MMIO remain available
     // for diagnostics if validation fails.
-    BarleyEarlyVisualTrace (
-      BARLEY_TRACE_STAGE_BEFORE_MEMORY_MAP,
-      BARLEY_TRACE_BEFORE_MEMORY_MAP_A,
-      BARLEY_TRACE_BEFORE_MEMORY_MAP_B
-      );
     LiveFdtValid = ValidateLiveFdt ();
-    BarleyEarlyVisualTrace (
-      BARLEY_TRACE_STAGE_AFTER_MEMORY_MAP,
-      BARLEY_TRACE_AFTER_MEMORY_MAP_A,
-      BARLEY_TRACE_AFTER_MEMORY_MAP_B
-      );
 
     if (LiveFdtValid) {
       CopyMem (

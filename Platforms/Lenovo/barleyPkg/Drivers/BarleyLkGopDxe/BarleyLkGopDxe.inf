@@ -9,6 +9,9 @@
 [Sources]
   BarleyLkGopDxe.c
 
+[Sources.AArch64]
+  AArch64/EarlyVisualTrace.S
+
 [Packages]
   ArmPkg/ArmPkg.dec
   MdePkg/MdePkg.dec

@@ -9,16 +9,6 @@
 
 #include "PlatformRegisters.h"
 
-#if BARLEY_STAGE_TRACE == 1
-VOID
-EFIAPI
-BarleyEarlyVisualTrace (
-  IN UINT32 Stage,
-  IN UINT32 PatternA,
-  IN UINT32 PatternB
-  );
-#endif
-
 VOID
 DisableWatchDogTimer ()
 {
@@ -35,6 +25,7 @@ DisableWatchDogTimer ()
   MmioWrite32 (WDogRegion.Address, WDT_MODE_KEY);
 }
 
+#if BARLEY_STAGE_TRACE != 1
 VOID
 EnableConstantBlending ()
 {
@@ -50,18 +41,17 @@ EnableConstantBlending ()
   // Enable Constant Blending
   MmioOr32 (OvlRegion.Address + OVL_PITCH_OFFSET (0), OVL_CONST_BLEND);
 }
+#endif
 
 VOID
 PlatformInitialize ()
 {
-#if BARLEY_STAGE_TRACE == 1
-  // First C-level platform marker; watchdog/display initialization follows.
-  BarleyEarlyVisualTrace (0x06, 0x0000FFFF, 0x0000FFFF);
-#endif
-
   // Disable WatchDog Timer
   DisableWatchDogTimer ();
 
-  // Enable Constant Blending
+  // M2.13 treats LK's display pipeline as immutable. Lancelot normally sets
+  // one OVL pitch bit here; the diagnostic build must perform no display MMIO.
+#if BARLEY_STAGE_TRACE != 1
   EnableConstantBlending ();
+#endif
 }

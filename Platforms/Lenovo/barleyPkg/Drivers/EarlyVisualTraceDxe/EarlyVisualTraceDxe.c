@@ -13,8 +13,8 @@ EarlyVisualTraceDxeEntryPoint (
   // the DXE core dispatcher has been reached and loaded its first trace driver.
   BarleyEarlyVisualTrace (
     BARLEY_TRACE_STAGE_DXE_CORE_REACHED,
-    BARLEY_TRACE_DXE_CORE_REACHED_A,
-    BARLEY_TRACE_DXE_CORE_REACHED_B
+    0,
+    0
     );
   return EFI_SUCCESS;
 }

@@ -5,6 +5,7 @@
 #include <Library/CacheMaintenanceLib.h>
 #include <Library/DebugLib.h>
 #include <Library/FrameBufferBltLib.h>
+#include <BarleyEarlyVisualTrace.h>
 #include <Library/IoLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/UefiBootServicesTableLib.h>
@@ -372,6 +373,8 @@ BarleyLkGopDxeEntryPoint (
   EFI_GRAPHICS_OUTPUT_BLT_PIXEL Black;
   EFI_GRAPHICS_OUTPUT_BLT_PIXEL White;
   EFI_STATUS                    Status;
+
+  BarleyEarlyVisualTrace (BARLEY_TRACE_STAGE_GOP_ENTRY, 0, 0);
 
   DiscoverLiveTargets ();
   Status = ConfigureTargets ();
