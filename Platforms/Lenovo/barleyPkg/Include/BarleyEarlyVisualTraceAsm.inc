@@ -31,7 +31,9 @@
   str   w14, [x8, #36]
   lsr   x15, x14, #32
   str   w15, [x8, #40]
-  str   x0, [x8, #44]
+  str   w0, [x8, #44]
+  lsr   x15, x0, #32
+  str   w15, [x8, #48]
 
   /* Publish start/size before the signature, so partial records are invalid. */
   mov   w17, #40
