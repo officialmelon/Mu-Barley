@@ -1,6 +1,7 @@
 #include "MsdcDxe.h"
 
 #define MSDC_POLL_DELAY_US          100U
+#define MSDC_PIO_POLL_DELAY_US      1U
 #define MSDC_CONTROL_TIMEOUT_US     100000U
 #define MSDC_BUSY_TIMEOUT_US        20000U
 #define MSDC_COMMAND_TIMEOUT_US     1000000U
@@ -12,19 +13,20 @@ STATIC
 UINTN
 MsdcPollCount (
   IN UINT64 PacketTimeout,
-  IN UINT32 DefaultTimeoutUs
+  IN UINT32 DefaultTimeoutUs,
+  IN UINT32 PollDelayUs
   )
 {
   UINT64 TimeoutUs;
 
   // EDK2's SD/eMMC bus drivers express this pass-through timeout in
-  // microseconds and decrement it once per 1-us host-controller poll.
+  // microseconds. Convert it to iterations at the caller's polling cadence.
   TimeoutUs = (PacketTimeout == 0) ? DefaultTimeoutUs : PacketTimeout;
   if (TimeoutUs > MSDC_DATA_TIMEOUT_US) {
     TimeoutUs = MSDC_DATA_TIMEOUT_US;
   }
 
-  return (UINTN)((TimeoutUs + MSDC_POLL_DELAY_US - 1) / MSDC_POLL_DELAY_US);
+  return (UINTN)((TimeoutUs + PollDelayUs - 1) / PollDelayUs);
 }
 
 MSDC_PRIVATE_DATA gMSDCPrivateDataTemplate = {
@@ -235,7 +237,10 @@ MsdcReset (
   UINT32 Reg;
 
   MsdcSetBits (Private, MSDC_CFG, MSDC_CFG_RST);
-  for (UINTN Poll = 0; Poll < MsdcPollCount (0, MSDC_CONTROL_TIMEOUT_US); Poll++) {
+  for (UINTN Poll = 0;
+       Poll < MsdcPollCount (0, MSDC_CONTROL_TIMEOUT_US, MSDC_POLL_DELAY_US);
+       Poll++)
+  {
     MsdcRead (Private, MSDC_CFG, &Reg);
     if ((Reg & MSDC_CFG_RST) == 0) {
       return EFI_SUCCESS;
@@ -255,7 +260,10 @@ MsdcClearFifo (
   UINT32 Reg;
 
   MsdcSetBits (Private, MSDC_FIFOCS, MSDC_FIFOCS_CLR);
-  for (UINTN Poll = 0; Poll < MsdcPollCount (0, MSDC_CONTROL_TIMEOUT_US); Poll++) {
+  for (UINTN Poll = 0;
+       Poll < MsdcPollCount (0, MSDC_CONTROL_TIMEOUT_US, MSDC_POLL_DELAY_US);
+       Poll++)
+  {
     MsdcRead (Private, MSDC_FIFOCS, &Reg);
     if ((Reg & MSDC_FIFOCS_CLR) == 0) {
       return EFI_SUCCESS;
@@ -396,7 +404,10 @@ MsdcSetMclk (
   MsdcWrite (Private, MSDC_CFG, CfgReg);
   MsdcSetBits (Private, MSDC_CFG, MSDC_CFG_CCKPD);
 
-  for (UINTN Poll = 0; Poll < MsdcPollCount (0, MSDC_CONTROL_TIMEOUT_US); Poll++) {
+  for (UINTN Poll = 0;
+       Poll < MsdcPollCount (0, MSDC_CONTROL_TIMEOUT_US, MSDC_POLL_DELAY_US);
+       Poll++)
+  {
     MsdcRead (Private, MSDC_CFG, &CfgReg);
     if ((CfgReg & MSDC_CFG_CCKSB) != 0) {
       return MsdcSetTimeout (Private);
@@ -435,7 +446,7 @@ MsdcWaitReady (
   }
 
   for (UINTN Poll = 0;
-       Poll < MsdcPollCount (PacketTimeout, MSDC_BUSY_TIMEOUT_US);
+       Poll < MsdcPollCount (PacketTimeout, MSDC_BUSY_TIMEOUT_US, MSDC_POLL_DELAY_US);
        Poll++)
   {
     MsdcRead (Private, SDC_STS, &Reg);
@@ -496,7 +507,10 @@ MsdcPollInterrupts (
   UINT32 IntStatus;
   UINT32 ObservedInterrupts;
 
-  for (UINTN Poll = 0; Poll < MsdcPollCount (PacketTimeout, MSDC_COMMAND_TIMEOUT_US); Poll++) {
+  for (UINTN Poll = 0;
+       Poll < MsdcPollCount (PacketTimeout, MSDC_COMMAND_TIMEOUT_US, MSDC_POLL_DELAY_US);
+       Poll++)
+  {
     MsdcRead (Private, MSDC_INT, &IntStatus);
     ObservedInterrupts = IntStatus & ExpectedInterrupts;
     if (ObservedInterrupts != 0) {
@@ -614,7 +628,7 @@ MsdcPioRead (
   UINTN PollCount;
 
   RemainSize = BufferLength;
-  PollCount = MsdcPollCount (PacketTimeout, MSDC_DATA_TIMEOUT_US);
+  PollCount = MsdcPollCount (PacketTimeout, MSDC_DATA_TIMEOUT_US, MSDC_PIO_POLL_DELAY_US);
   TransferComplete = FALSE;
 
   MsdcClrBits (Private, MSDC_INTEN, MSDC_INT_DATSTS);
@@ -623,12 +637,13 @@ MsdcPioRead (
     MsdcRead (Private, MSDC_INT, &IntStatus);
     ObservedInterrupts = IntStatus & MSDC_INT_DATSTS;
 
-    // Drain every byte already presented by the controller before deciding
-    // that XFER_COMPL ended the transfer.  The completion bit may become
-    // visible in the same poll as the final FIFO data.
+    // Service the FIFO at data-path cadence.  Waiting the control-path 100 us
+    // here can overflow or stall the 128-byte FIFO at normal SD/MMC clocks.
+    // Read full FIFO chunks, matching the original MediaTek PIO algorithm;
+    // only the final transfer chunk may be smaller than MSDC_FIFO_SIZE.
     MsdcFifoRxBytes (Private, &RxBytes);
-    ChunkSize = RxBytes < RemainSize ? RxBytes : RemainSize;
-    if (ChunkSize != 0) {
+    ChunkSize = RemainSize > MSDC_FIFO_SIZE ? MSDC_FIFO_SIZE : RemainSize;
+    if ((ChunkSize != 0) && (RxBytes >= ChunkSize)) {
       MsdcFifoRead (Private, ByteBuffer, ChunkSize);
       ByteBuffer += ChunkSize;
       RemainSize -= ChunkSize;
@@ -650,11 +665,20 @@ MsdcPioRead (
       break;
     }
 
-    MicroSecondDelay (MSDC_POLL_DELAY_US);
+    MicroSecondDelay (MSDC_PIO_POLL_DELAY_US);
   }
 
   if (!TransferComplete || (RemainSize != 0)) {
-    DEBUG ((DEBUG_ERROR, "MsdcDxe: controller %u PIO read timed out\n", Private->Index));
+    DEBUG ((
+      DEBUG_ERROR,
+      "MsdcDxe: controller %u PIO read timed out: remaining=%u int=0x%08x "
+      "fifo=%u complete=%u\n",
+      Private->Index,
+      RemainSize,
+      IntStatus,
+      RxBytes,
+      TransferComplete
+      ));
     return EFI_TIMEOUT;
   }
 
@@ -674,7 +698,7 @@ MsdcPioWrite (
   UINTN PollCount;
 
   RemainSize = BufferLength;
-  PollCount = MsdcPollCount (PacketTimeout, MSDC_DATA_TIMEOUT_US);
+  PollCount = MsdcPollCount (PacketTimeout, MSDC_DATA_TIMEOUT_US, MSDC_PIO_POLL_DELAY_US);
   TransferComplete = FALSE;
 
   MsdcClrBits (Private, MSDC_INTEN, MSDC_INT_DATSTS);
@@ -710,11 +734,19 @@ MsdcPioWrite (
       RemainSize -= ChunkSize;
     }
 
-    MicroSecondDelay (MSDC_POLL_DELAY_US);
+    MicroSecondDelay (MSDC_PIO_POLL_DELAY_US);
   }
 
   if (!TransferComplete) {
-    DEBUG ((DEBUG_ERROR, "MsdcDxe: controller %u PIO write timed out\n", Private->Index));
+    DEBUG ((
+      DEBUG_ERROR,
+      "MsdcDxe: controller %u PIO write timed out: remaining=%u int=0x%08x "
+      "fifo=%u\n",
+      Private->Index,
+      RemainSize,
+      IntStatus,
+      TxBytes
+      ));
     return EFI_TIMEOUT;
   }
 
