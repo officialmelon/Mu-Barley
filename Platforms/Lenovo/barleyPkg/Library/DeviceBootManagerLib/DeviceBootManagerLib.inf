@@ -28,5 +28,8 @@
 
 [Protocols]
   gEfiBlockIoProtocolGuid
+  gEfiDiskIoProtocolGuid
   gEfiLoadedImageProtocolGuid
+  gEfiPartitionInfoProtocolGuid
   gEfiSdMmcPassThruProtocolGuid
+  gEfiSimpleFileSystemProtocolGuid

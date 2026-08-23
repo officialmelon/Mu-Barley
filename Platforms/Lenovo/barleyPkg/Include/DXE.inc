@@ -28,6 +28,12 @@
   INF MediaTekPkg/Drivers/MsdcDxe/MsdcDxe.inf
   INF MdeModulePkg/Bus/Sd/EmmcDxe/EmmcDxe.inf
 
+  # Standard block-device composition.  These remain outside APRIORI and are
+  # connected only below the verified host-0 eMMC pass-through controller.
+  INF MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf
+  INF MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf
+  INF FatPkg/EnhancedFatDxe/Fat.inf
+
   INF MdeModulePkg/Universal/Console/ConPlatformDxe/ConPlatformDxe.inf
   INF MdeModulePkg/Universal/Console/ConSplitterDxe/ConSplitterDxe.inf
   INF MdeModulePkg/Universal/Console/GraphicsConsoleDxe/GraphicsConsoleDxe.inf

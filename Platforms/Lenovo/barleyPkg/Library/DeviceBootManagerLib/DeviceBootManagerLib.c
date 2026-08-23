@@ -17,8 +17,11 @@
 #include <Library/UefiLib.h>
 
 #include <Protocol/BlockIo.h>
+#include <Protocol/DiskIo.h>
 #include <Protocol/LoadedImage.h>
+#include <Protocol/PartitionInfo.h>
 #include <Protocol/SdMmcPassThru.h>
+#include <Protocol/SimpleFileSystem.h>
 
 extern EFI_GUID gUefiShellFileGuid;
 
@@ -179,10 +182,14 @@ DeviceBootManagerAfterConsole (
 
   if (gST->ConOut != NULL) {
     Print (
-      L"eMMC raw proof: %u pass-through, %u Block I/O, connect %r\r\n"
+      L"eMMC proof: %u pass-through, %u Block I/O, %u Disk I/O, "
+      L"%u partitions, %u file systems, connect %r\r\n"
       L"Launching FV UEFI Shell...\r\n",
       ControllerCount,
       CountProtocolHandles (&gEfiBlockIoProtocolGuid),
+      CountProtocolHandles (&gEfiDiskIoProtocolGuid),
+      CountProtocolHandles (&gEfiPartitionInfoProtocolGuid),
+      CountProtocolHandles (&gEfiSimpleFileSystemProtocolGuid),
       ConnectStatus
       );
   }
