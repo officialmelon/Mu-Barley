@@ -40,11 +40,14 @@ READ_LOCK_STATUS   = TRUE
   !include Include/APRIORI.inc
   !include Include/DXE.inc
 
+  # Standard Silicium boot policy, boot manager, setup, and recovery tools.
+  # This is the same MediaTek include used by the working lancelot/stone ports.
+  !include MediaTekPkg/Extra.fdf.inc
+
   INF ShellPkg/Application/Shell/Shell.inf
 
-  # ACPI, USB and platform peripherals remain deferred.  The standard
-  # MediaTek eMMC/SD stack is included through DXE.inc and falls through to
-  # the internal Shell when a host or card is unavailable.
+  # ACPI, USB and other platform peripherals remain deferred.  The standard
+  # MediaTek eMMC/SD stack is included through DXE.inc and APRIORI.inc.
 
 [FV.FVMAIN_COMPACT]
 FvAlignment        = 8

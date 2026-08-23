@@ -6,6 +6,22 @@ APRIORI DXE {
   INF ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.inf
   INF EmbeddedPkg/MetronomeDxe/MetronomeDxe.inf
   INF ArmPkg/Drivers/TimerDxe/TimerDxe.inf
+
+  # Match the proven MT6768 storage ordering used by lancelot.  Providers are
+  # available before BDS, so the normal Silicium boot policy can connect media
+  # without a platform-specific dispatcher hook.
+  INF MediaTekPkg/Drivers/GpioDxe/GpioDxe.inf
+  INF MediaTekPkg/Drivers/ClockDxe/ClockDxe.inf
+  INF MediaTekPkg/Drivers/PmicWrapperDxe/PmicWrapperDxe.inf
+  INF MediaTekPkg/Drivers/MT6358PmicDxe/MT6358PmicDxe.inf
+  INF MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf
+  INF MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf
+  INF MediaTekPkg/Drivers/MsdcDxe/MsdcDxe.inf
+  INF MdeModulePkg/Bus/Sd/EmmcDxe/EmmcDxe.inf
+  INF MdeModulePkg/Bus/Sd/SdDxe/SdDxe.inf
+  INF FatPkg/EnhancedFatDxe/Fat.inf
+  INF MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf
+
   INF MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
   INF MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystemRuntimeDxe.inf
   INF MdeModulePkg/Universal/WatchdogTimerDxe/WatchdogTimer.inf
@@ -15,10 +31,8 @@ APRIORI DXE {
   INF MdeModulePkg/Universal/DevicePathDxe/DevicePathDxe.inf
   INF MdeModulePkg/Universal/CapsuleRuntimeDxe/CapsuleRuntimeDxe.inf
   INF MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
-  # Match the proven MT6768 input ordering: the PMIC provider must exist before
-  # the platform keypad library constructor is invoked.
-  INF MediaTekPkg/Drivers/PmicWrapperDxe/PmicWrapperDxe.inf
-  INF MediaTekPkg/Drivers/MT6358PmicDxe/MT6358PmicDxe.inf
+  # The PMIC provider above must exist before the platform keypad library
+  # constructor is invoked.
   INF SiliciumPkg/Drivers/KeypadDeviceDxe/KeypadDeviceDxe.inf
   INF SiliciumPkg/Drivers/KeypadDxe/KeypadDxe.inf
   INF barleyPkg/Drivers/BarleyLkGopDxe/BarleyLkGopDxe.inf

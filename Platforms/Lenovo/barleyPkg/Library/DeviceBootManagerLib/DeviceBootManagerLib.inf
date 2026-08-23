@@ -17,7 +17,6 @@
 
 [LibraryClasses]
   DevicePathLib
-  DxeServicesTableLib
   MemoryAllocationLib
   UefiBootManagerLib
   UefiBootServicesTableLib
@@ -27,9 +26,4 @@
   gUefiShellFileGuid
 
 [Protocols]
-  gEfiBlockIoProtocolGuid
-  gEfiDiskIoProtocolGuid
   gEfiLoadedImageProtocolGuid
-  gEfiPartitionInfoProtocolGuid
-  gEfiSdMmcPassThruProtocolGuid
-  gEfiSimpleFileSystemProtocolGuid
