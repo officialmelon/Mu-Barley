@@ -706,7 +706,7 @@ RegulatorSetVoltage(
     // Map specified voltage to voltage selection
     for (Index = 0; Index < Regulator->Ldo.RangesLen; Index++) {
       if (Voltage == Regulator->Ldo.Ranges[Index].Voltage) {
-        Vosel = Regulator->Ldo.Ranges[Index].Voltage;
+        Vosel = Regulator->Ldo.Ranges[Index].Mask;
         break;
       }
     }
@@ -719,7 +719,7 @@ RegulatorSetVoltage(
     // Write voltage selection to analog register
     mPmicWrapper->Read (Regulator->Ldo.AnaReg, &Value);
     Value &= ~(Regulator->Ldo.VoselMask << Regulator->Ldo.VoselShift);
-    Value |= Vosel << Regulator->Ldo.VoselShift;
+    Value |= (Vosel & Regulator->Ldo.VoselMask) << Regulator->Ldo.VoselShift;
     mPmicWrapper->Write(Regulator->Ldo.AnaReg, Value);
     return EFI_SUCCESS;
   case FixedLdo:

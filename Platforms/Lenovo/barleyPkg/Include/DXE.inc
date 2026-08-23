@@ -14,6 +14,17 @@
   INF EmbeddedPkg/MetronomeDxe/MetronomeDxe.inf
   INF ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.inf
   INF ArmPkg/Drivers/TimerDxe/TimerDxe.inf
+
+  # MT6768 eMMC provider chain.  Keep the first storage milestone limited to
+  # controller discovery and Block I/O; partition and filesystem drivers come
+  # only after physical eMMC enumeration is proven.
+  INF MediaTekPkg/Drivers/GpioDxe/GpioDxe.inf
+  INF MediaTekPkg/Drivers/ClockDxe/ClockDxe.inf
+  INF MediaTekPkg/Drivers/PmicWrapperDxe/PmicWrapperDxe.inf
+  INF MediaTekPkg/Drivers/MT6358PmicDxe/MT6358PmicDxe.inf
+  INF MediaTekPkg/Drivers/MsdcDxe/MsdcDxe.inf
+  INF MdeModulePkg/Bus/Sd/EmmcDxe/EmmcDxe.inf
+
   INF MdeModulePkg/Universal/PrintDxe/PrintDxe.inf
   INF MdeModulePkg/Universal/DevicePathDxe/DevicePathDxe.inf
   INF MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
