@@ -1,10 +1,14 @@
 /** @file
   Passive GOP for the scanout surfaces configured by Lenovo LK.
 
-  The driver never writes display MMIO.  It snapshots the enabled OVL/RDMA
-  sources, accepts only the three framebuffers inside LK's verified carveout,
-  and mirrors GOP BLTs to every active full-screen source.  PixelBltOnly keeps
-  consumers from mistaking one composited LK layer for a final linear handoff.
+  The driver never accesses display MMIO.  Lenovo's LK log proves that its
+  full-screen layer 0 alternates between FB0 and FB2 while its full-screen
+  overlay remains on FB1.  Register readback is not a reliable ownership
+  contract after LK has handed control to the payload, so every GOP write is
+  mirrored to all three buffers in the verified framebuffer carveout.
+
+  PixelBltOnly keeps consumers from mistaking one member of LK's composited
+  triple-buffer pool for a single authoritative linear framebuffer.
 
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
@@ -14,7 +18,6 @@
 #include <Library/ArmLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/CacheMaintenanceLib.h>
-#include <Library/IoLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 
@@ -24,13 +27,13 @@
 #include <BarleyLkDisplay.h>
 #include <Configuration/BootDevices.h>
 
-#define BARLEY_MAX_SCANOUT_TARGETS  6U
 #define BARLEY_FB0_BASE             0x7BCE0000ULL
 #define BARLEY_FB1_BASE             0x7C5C8000ULL
 #define BARLEY_FB2_BASE             0x7CEB0000ULL
 #define BARLEY_FB_CARVEOUT_END      0x7DC00000ULL
 #define BARLEY_PITCH_PACKED         4800U
 #define BARLEY_PITCH_ALIGNED        4864U
+#define BARLEY_PRIMARY_TARGET       2U
 
 typedef struct {
   EFI_PHYSICAL_ADDRESS    Base;
@@ -38,8 +41,20 @@ typedef struct {
   UINTN                   Size;
 } BARLEY_SCANOUT_TARGET;
 
-STATIC BARLEY_SCANOUT_TARGET mTargets[BARLEY_MAX_SCANOUT_TARGETS];
-STATIC UINTN                 mTargetCount;
+STATIC CONST BARLEY_SCANOUT_TARGET mTargets[] = {
+  { BARLEY_FB0_BASE, BARLEY_PITCH_ALIGNED, BARLEY_PITCH_ALIGNED * BARLEY_DISPLAY_HEIGHT },
+  { BARLEY_FB1_BASE, BARLEY_PITCH_PACKED,  BARLEY_PITCH_PACKED  * BARLEY_DISPLAY_HEIGHT },
+  { BARLEY_FB2_BASE, BARLEY_PITCH_ALIGNED, BARLEY_PITCH_ALIGNED * BARLEY_DISPLAY_HEIGHT }
+};
+
+STATIC_ASSERT (
+  BARLEY_FB0_BASE + (BARLEY_PITCH_ALIGNED * BARLEY_DISPLAY_HEIGHT) == BARLEY_FB1_BASE,
+  "LK FB0 allocation must end at FB1"
+  );
+STATIC_ASSERT (
+  BARLEY_FB2_BASE + (BARLEY_PITCH_ALIGNED * BARLEY_DISPLAY_HEIGHT) <= BARLEY_FB_CARVEOUT_END,
+  "LK FB2 allocation must remain inside the framebuffer carveout"
+  );
 
 STATIC EFI_GRAPHICS_OUTPUT_MODE_INFORMATION mModeInfo = {
   0,
@@ -58,142 +73,6 @@ STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE mMode = {
   0,
   0
 };
-
-STATIC
-BOOLEAN
-IsKnownFramebuffer (
-  IN EFI_PHYSICAL_ADDRESS Base
-  )
-{
-  return (Base == BARLEY_FB0_BASE) ||
-         (Base == BARLEY_FB1_BASE) ||
-         (Base == BARLEY_FB2_BASE);
-}
-
-STATIC
-BOOLEAN
-ValidTarget (
-  IN EFI_PHYSICAL_ADDRESS Base,
-  IN UINT32               Pitch
-  )
-{
-  UINT64 Size;
-
-  if (!IsKnownFramebuffer (Base) ||
-      ((Pitch != BARLEY_PITCH_PACKED) &&
-       (Pitch != BARLEY_PITCH_ALIGNED)))
-  {
-    return FALSE;
-  }
-
-  Size = MultU64x32 (Pitch, BARLEY_DISPLAY_HEIGHT);
-  return (Base + Size > Base) && (Base + Size <= BARLEY_FB_CARVEOUT_END);
-}
-
-STATIC
-VOID
-AddTarget (
-  IN EFI_PHYSICAL_ADDRESS Base,
-  IN UINT32               Pitch
-  )
-{
-  BARLEY_SCANOUT_TARGET *Target;
-
-  if (!ValidTarget (Base, Pitch)) {
-    return;
-  }
-
-  for (UINTN Index = 0; Index < mTargetCount; Index++) {
-    if (mTargets[Index].Base == Base) {
-      return;
-    }
-  }
-
-  if (mTargetCount == ARRAY_SIZE (mTargets)) {
-    return;
-  }
-
-  Target                = &mTargets[mTargetCount++];
-  Target->Base          = Base;
-  Target->Pitch         = Pitch;
-  Target->Size          = Pitch * BARLEY_DISPLAY_HEIGHT;
-}
-
-STATIC
-VOID
-DiscoverOvlTargets (
-  IN UINTN  Base,
-  IN UINT32 LayerCount
-  )
-{
-  UINT32 Enabled;
-  UINT32 Source;
-
-  Enabled = MmioRead32 (Base + BARLEY_OVL_EN);
-  Source  = MmioRead32 (Base + BARLEY_OVL_SRC_CON);
-  if ((Enabled & BIT0) == 0) {
-    return;
-  }
-
-  for (UINT32 Layer = 0; Layer < LayerCount; Layer++) {
-    EFI_PHYSICAL_ADDRESS Address;
-    UINT32               Height;
-    UINT32               Pitch;
-    UINT32               Size;
-    UINT32               Width;
-
-    if ((Source & (BIT0 << Layer)) == 0) {
-      continue;
-    }
-
-    Address = MmioRead32 (Base + BARLEY_OVL_L_ADDR (Layer));
-    Pitch   = MmioRead32 (Base + BARLEY_OVL_L_PITCH (Layer)) & 0xFFFFU;
-    Size    = MmioRead32 (Base + BARLEY_OVL_L_SRC_SIZE (Layer));
-    Width   = Size & 0x1FFFU;
-    Height  = (Size >> 16) & 0x1FFFU;
-
-    // Some LK shadow configurations expose zero live geometry.  The exact
-    // verified framebuffer address and pitch still bound those cases safely.
-    if (((Width == BARLEY_DISPLAY_WIDTH) &&
-         (Height == BARLEY_DISPLAY_HEIGHT)) ||
-        ((Width == 0) && (Height == 0)))
-    {
-      AddTarget (Address, Pitch);
-    }
-  }
-}
-
-STATIC
-VOID
-DiscoverLiveTargets (
-  VOID
-  )
-{
-  UINT32 RdmaGlobal;
-
-  ZeroMem (mTargets, sizeof (mTargets));
-  mTargetCount = 0;
-
-  DiscoverOvlTargets (BARLEY_OVL0_BASE, 4);
-  DiscoverOvlTargets (BARLEY_OVL0_2L_BASE, 2);
-
-  RdmaGlobal = MmioRead32 (BARLEY_RDMA0_BASE + BARLEY_RDMA_GLOBAL_CON);
-  if ((RdmaGlobal & BARLEY_RDMA_MEMORY_MODE) != 0) {
-    AddTarget (
-      MmioRead32 (BARLEY_RDMA0_BASE + BARLEY_RDMA_MEM_START_ADDR),
-      MmioRead32 (BARLEY_RDMA0_BASE + BARLEY_RDMA_MEM_SRC_PITCH) & 0xFFFFU
-      );
-  }
-}
-
-STATIC
-EFI_STATUS
-ConfigureTargets (
-  VOID
-  )
-{
-  return (mTargetCount == 0) ? EFI_NOT_FOUND : EFI_SUCCESS;
-}
 
 STATIC
 EFI_STATUS
@@ -551,9 +430,12 @@ BarleyBlt (
 
   OldTpl      = gBS->RaiseTPL (TPL_NOTIFY);
   Status      = EFI_SUCCESS;
-  TargetLimit = (BltOperation == EfiBltVideoToBltBuffer) ? 1U : mTargetCount;
+  TargetLimit = (BltOperation == EfiBltVideoToBltBuffer) ? 1U : ARRAY_SIZE (mTargets);
 
-  for (UINTN Index = 0; Index < TargetLimit; Index++) {
+  for (UINTN Slot = 0; Slot < TargetLimit; Slot++) {
+    UINTN Index;
+
+    Index = (BltOperation == EfiBltVideoToBltBuffer) ? BARLEY_PRIMARY_TARGET : Slot;
     switch (BltOperation) {
       case EfiBltVideoFill:
         FillTarget (
@@ -676,12 +558,6 @@ BarleyLkGopDxeEntryPoint (
   )
 {
   EFI_STATUS Status;
-
-  DiscoverLiveTargets ();
-  Status = ConfigureTargets ();
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
 
   Status = gBS->InstallMultipleProtocolInterfaces (
                   &ImageHandle,

@@ -77,19 +77,22 @@ implementation fails closed and does not add the other broad mblocks.
 range into one unsafe allocation.
 
 `BarleyLkGopDxe` wraps the display pipeline already configured by Lenovo LK; it
-does not initialize DSI, reset the panel, or change clocks/timings. At entry it
-reads the MT6768 OVL0, OVL0_2L, and RDMA0 configuration, derives enabled source
-addresses and pitch, and mirrors GOP BLTs only to enabled full-screen sources
-whose base is one of the three verified OVL framebuffers. Display MMIO is
-strictly read-only. The public GOP is `PixelBltOnly`; its direct BLT routines
-honor each target's 4800/4864-byte stride and force the BGRA alpha byte to
-`0xFF` for fills and buffer-to-video writes. LK expdb proves the handoff is OVL
-direct-link mode with `eBGRA8888`, 1200 x 1920 layers. Observed OVL addresses
-are `0x7BCE0000`, `0x7C5C8000`, and `0x7CEB0000`; the aligned surfaces are
-spaced by `0x008E8000`. The former guessed writes to `0x7A3F8000` and
-`0x7E605000` are gone. `LK Framebuffer`, `LK Logo Surface`, and `Display
-Reserved` remain separate reserved descriptors. LK free mblock 11 remains
-omitted.
+does not initialize DSI, reset the panel, change clocks/timings, or access
+display MMIO. LK expdb proves an OVL direct-link handoff with `eBGRA8888`,
+1200 x 1920 layers. Layer 0 alternates between `0x7BCE0000` and `0x7CEB0000`
+at a 4864-byte pitch, while the full-screen layer-3 surface at `0x7C5C8000`
+uses a 4800-byte pitch. All three live inside the verified framebuffer
+carveout and the aligned allocations are spaced by `0x008E8000`.
+
+Register readback after LK's handoff does not identify the composited buffer
+pool reliably enough to gate GOP installation. The passive GOP therefore
+mirrors every BLT to all three verified surfaces with each surface's own
+stride. Its public mode is `PixelBltOnly`, and its direct BLT routines force
+the BGRA alpha byte to `0xFF` for fills and buffer-to-video writes. The distinct
+LK logo decompression allocation at `0x7A3F8000` and FDT display reservation at
+`0x7E605000` are not treated as scanout. `LK Framebuffer`, `LK Logo Surface`,
+and `Display Reserved` remain separate reserved descriptors. LK free mblock
+11 remains omitted.
 
 Buttons are intentionally omitted. Android evidence shows power and
 volume-down on `mtk-pmic-keys`, while volume-up is on `mtk-kpd`. Lancelot's
