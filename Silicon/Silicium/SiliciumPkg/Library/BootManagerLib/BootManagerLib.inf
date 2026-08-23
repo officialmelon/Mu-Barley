@@ -16,9 +16,6 @@
   BootManager.c
   KeyCallback.c
 
-[Sources.AArch64]
-  AArch64/BarleyTrace.S
-
 [Packages]
   MdePkg/MdePkg.dec
   PcBdsPkg/PcBdsPkg.dec
@@ -26,7 +23,6 @@
   MsGraphicsPkg/MsGraphicsPkg.dec
   MdeModulePkg/MdeModulePkg.dec
   SiliciumPkg/SiliciumPkg.dec
-  barleyPkg/barley.dec
 
 [LibraryClasses]
   PcdLib

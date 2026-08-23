@@ -1,11 +1,19 @@
+/** @file
+  Passive GOP for the scanout surfaces configured by Lenovo LK.
+
+  The driver never writes display MMIO.  It snapshots the enabled OVL/RDMA
+  sources, accepts only the three framebuffers inside LK's verified carveout,
+  and mirrors GOP BLTs to every active full-screen source.  PixelBltOnly keeps
+  consumers from mistaking one composited LK layer for a final linear handoff.
+
+  SPDX-License-Identifier: BSD-2-Clause-Patent
+**/
+
 #include <Uefi.h>
 
-#include <Library/BaseMemoryLib.h>
 #include <Library/ArmLib.h>
+#include <Library/BaseMemoryLib.h>
 #include <Library/CacheMaintenanceLib.h>
-#include <Library/DebugLib.h>
-#include <Library/FrameBufferBltLib.h>
-#include <BarleyEarlyVisualTrace.h>
 #include <Library/IoLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/UefiBootServicesTableLib.h>
@@ -16,18 +24,18 @@
 #include <BarleyLkDisplay.h>
 #include <Configuration/BootDevices.h>
 
-#define BARLEY_MAX_SCANOUT_TARGETS  10U
-#define BARLEY_MIN_SCANOUT_ADDRESS  0x70000000ULL
-#define BARLEY_MAX_SCANOUT_ADDRESS  0x80000000ULL
-#define BARLEY_MIN_PITCH            (BARLEY_DISPLAY_WIDTH * BARLEY_DISPLAY_BYTES_PER_PIXEL)
-#define BARLEY_MAX_PITCH            0x00002000U
+#define BARLEY_MAX_SCANOUT_TARGETS  6U
+#define BARLEY_FB0_BASE             0x7BCE0000ULL
+#define BARLEY_FB1_BASE             0x7C5C8000ULL
+#define BARLEY_FB2_BASE             0x7CEB0000ULL
+#define BARLEY_FB_CARVEOUT_END      0x7DC00000ULL
+#define BARLEY_PITCH_PACKED         4800U
+#define BARLEY_PITCH_ALIGNED        4864U
 
 typedef struct {
   EFI_PHYSICAL_ADDRESS    Base;
   UINT32                  Pitch;
-  UINT32                  PixelsPerScanLine;
   UINTN                   Size;
-  FRAME_BUFFER_CONFIGURE *Configuration;
 } BARLEY_SCANOUT_TARGET;
 
 STATIC BARLEY_SCANOUT_TARGET mTargets[BARLEY_MAX_SCANOUT_TARGETS];
@@ -37,9 +45,9 @@ STATIC EFI_GRAPHICS_OUTPUT_MODE_INFORMATION mModeInfo = {
   0,
   BARLEY_DISPLAY_WIDTH,
   BARLEY_DISPLAY_HEIGHT,
-  PixelBlueGreenRedReserved8BitPerColor,
+  PixelBltOnly,
   { 0, 0, 0, 0 },
-  BARLEY_DISPLAY_WIDTH
+  0
 };
 
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE mMode = {
@@ -47,9 +55,20 @@ STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE mMode = {
   0,
   &mModeInfo,
   sizeof (mModeInfo),
-  BARLEY_LK_LOGO_BASE,
-  BARLEY_LK_LOGO_SIZE
+  0,
+  0
 };
+
+STATIC
+BOOLEAN
+IsKnownFramebuffer (
+  IN EFI_PHYSICAL_ADDRESS Base
+  )
+{
+  return (Base == BARLEY_FB0_BASE) ||
+         (Base == BARLEY_FB1_BASE) ||
+         (Base == BARLEY_FB2_BASE);
+}
 
 STATIC
 BOOLEAN
@@ -60,16 +79,15 @@ ValidTarget (
 {
   UINT64 Size;
 
-  if ((Base < BARLEY_MIN_SCANOUT_ADDRESS) ||
-      (Pitch < BARLEY_MIN_PITCH) ||
-      (Pitch > BARLEY_MAX_PITCH) ||
-      ((Pitch & (BARLEY_DISPLAY_BYTES_PER_PIXEL - 1U)) != 0))
+  if (!IsKnownFramebuffer (Base) ||
+      ((Pitch != BARLEY_PITCH_PACKED) &&
+       (Pitch != BARLEY_PITCH_ALIGNED)))
   {
     return FALSE;
   }
 
   Size = MultU64x32 (Pitch, BARLEY_DISPLAY_HEIGHT);
-  return (Base + Size > Base) && (Base + Size <= BARLEY_MAX_SCANOUT_ADDRESS);
+  return (Base + Size > Base) && (Base + Size <= BARLEY_FB_CARVEOUT_END);
 }
 
 STATIC
@@ -95,11 +113,10 @@ AddTarget (
     return;
   }
 
-  Target                    = &mTargets[mTargetCount++];
-  Target->Base              = Base;
-  Target->Pitch             = Pitch;
-  Target->PixelsPerScanLine = Pitch / BARLEY_DISPLAY_BYTES_PER_PIXEL;
-  Target->Size              = Pitch * BARLEY_DISPLAY_HEIGHT;
+  Target                = &mTargets[mTargetCount++];
+  Target->Base          = Base;
+  Target->Pitch         = Pitch;
+  Target->Size          = Pitch * BARLEY_DISPLAY_HEIGHT;
 }
 
 STATIC
@@ -120,10 +137,10 @@ DiscoverOvlTargets (
 
   for (UINT32 Layer = 0; Layer < LayerCount; Layer++) {
     EFI_PHYSICAL_ADDRESS Address;
+    UINT32               Height;
     UINT32               Pitch;
     UINT32               Size;
     UINT32               Width;
-    UINT32               Height;
 
     if ((Source & (BIT0 << Layer)) == 0) {
       continue;
@@ -135,8 +152,10 @@ DiscoverOvlTargets (
     Width   = Size & 0x1FFFU;
     Height  = (Size >> 16) & 0x1FFFU;
 
-    // LK logs prove 1200x1920. Accept zero geometry only for diagnostic mirroring.
-    if (((Width == BARLEY_DISPLAY_WIDTH) && (Height == BARLEY_DISPLAY_HEIGHT)) ||
+    // Some LK shadow configurations expose zero live geometry.  The exact
+    // verified framebuffer address and pitch still bound those cases safely.
+    if (((Width == BARLEY_DISPLAY_WIDTH) &&
+         (Height == BARLEY_DISPLAY_HEIGHT)) ||
         ((Width == 0) && (Height == 0)))
     {
       AddTarget (Address, Pitch);
@@ -155,7 +174,6 @@ DiscoverLiveTargets (
   ZeroMem (mTargets, sizeof (mTargets));
   mTargetCount = 0;
 
-  // Prefer live OVL sources so GOP FrameBufferBase describes the active path.
   DiscoverOvlTargets (BARLEY_OVL0_BASE, 4);
   DiscoverOvlTargets (BARLEY_OVL0_2L_BASE, 2);
 
@@ -166,10 +184,6 @@ DiscoverLiveTargets (
       MmioRead32 (BARLEY_RDMA0_BASE + BARLEY_RDMA_MEM_SRC_PITCH) & 0xFFFFU
       );
   }
-
-  // Retain the two requested diagnostic mirrors even when neither is scanout.
-  AddTarget (BARLEY_LK_LOGO_BASE, BARLEY_MIN_PITCH);
-  AddTarget (BARLEY_FDT_DISPLAY_BASE, BARLEY_MIN_PITCH);
 }
 
 STATIC
@@ -178,49 +192,7 @@ ConfigureTargets (
   VOID
   )
 {
-  EFI_GRAPHICS_OUTPUT_MODE_INFORMATION TargetInfo;
-
-  for (UINTN Index = 0; Index < mTargetCount; Index++) {
-    EFI_STATUS Status;
-    UINTN      ConfigurationSize;
-
-    CopyMem (&TargetInfo, &mModeInfo, sizeof (TargetInfo));
-    TargetInfo.PixelsPerScanLine = mTargets[Index].PixelsPerScanLine;
-    ConfigurationSize            = 0;
-    Status = FrameBufferBltConfigure (
-               (VOID *)(UINTN)mTargets[Index].Base,
-               &TargetInfo,
-               NULL,
-               &ConfigurationSize
-               );
-    if (Status != RETURN_BUFFER_TOO_SMALL) {
-      return Status;
-    }
-
-    mTargets[Index].Configuration = AllocatePool (ConfigurationSize);
-    if (mTargets[Index].Configuration == NULL) {
-      return EFI_OUT_OF_RESOURCES;
-    }
-
-    Status = FrameBufferBltConfigure (
-               (VOID *)(UINTN)mTargets[Index].Base,
-               &TargetInfo,
-               mTargets[Index].Configuration,
-               &ConfigurationSize
-               );
-    if (EFI_ERROR (Status)) {
-      return Status;
-    }
-  }
-
-  if (mTargetCount == 0) {
-    return EFI_NOT_FOUND;
-  }
-
-  mModeInfo.PixelsPerScanLine = mTargets[0].PixelsPerScanLine;
-  mMode.FrameBufferBase       = mTargets[0].Base;
-  mMode.FrameBufferSize       = mTargets[0].Size;
-  return EFI_SUCCESS;
+  return (mTargetCount == 0) ? EFI_NOT_FOUND : EFI_SUCCESS;
 }
 
 STATIC
@@ -251,48 +223,222 @@ BarleyQueryMode (
 }
 
 STATIC
-EFI_STATUS
-EFIAPI
-BarleySetMode (
-  IN EFI_GRAPHICS_OUTPUT_PROTOCOL *This,
-  IN UINT32                        ModeNumber
-  )
-{
-  if ((This == NULL) || (ModeNumber != 0)) {
-    return EFI_UNSUPPORTED;
-  }
-
-  This->Mode->Mode = 0;
-  return EFI_SUCCESS;
-}
-
-STATIC
 VOID
 CleanDestination (
-  IN CONST BARLEY_SCANOUT_TARGET          *Target,
-  IN EFI_GRAPHICS_OUTPUT_BLT_OPERATION     Operation,
-  IN UINTN                                 DestinationX,
-  IN UINTN                                 DestinationY,
-  IN UINTN                                 Width,
-  IN UINTN                                 Height
+  IN CONST BARLEY_SCANOUT_TARGET      *Target,
+  IN EFI_GRAPHICS_OUTPUT_BLT_OPERATION Operation,
+  IN UINTN                             DestinationX,
+  IN UINTN                             DestinationY,
+  IN UINTN                             Width,
+  IN UINTN                             Height
   )
 {
-  UINTN StartY;
   UINTN Length;
 
   if (Operation == EfiBltVideoToBltBuffer) {
     return;
   }
 
-  StartY = DestinationY;
-  Length = ((Height - 1U) * Target->Pitch) + (Width * BARLEY_DISPLAY_BYTES_PER_PIXEL);
+  Length = ((Height - 1U) * Target->Pitch) +
+           (Width * BARLEY_DISPLAY_BYTES_PER_PIXEL);
   WriteBackDataCacheRange (
-    (VOID *)(UINTN)(Target->Base + (StartY * Target->Pitch) +
+    (VOID *)(UINTN)(Target->Base +
+                    (DestinationY * Target->Pitch) +
                     (DestinationX * BARLEY_DISPLAY_BYTES_PER_PIXEL)),
     Length
     );
   ArmDataSynchronizationBarrier ();
   ArmInstructionSynchronizationBarrier ();
+}
+
+STATIC
+BOOLEAN
+VideoRectangleValid (
+  IN UINTN X,
+  IN UINTN Y,
+  IN UINTN Width,
+  IN UINTN Height
+  )
+{
+  return (X < BARLEY_DISPLAY_WIDTH) &&
+         (Y < BARLEY_DISPLAY_HEIGHT) &&
+         (Width <= BARLEY_DISPLAY_WIDTH - X) &&
+         (Height <= BARLEY_DISPLAY_HEIGHT - Y);
+}
+
+STATIC
+BOOLEAN
+GetBufferStride (
+  IN  UINTN X,
+  IN  UINTN Y,
+  IN  UINTN Width,
+  IN  UINTN Height,
+  IN  UINTN Delta,
+  OUT UINTN *Stride
+  )
+{
+  UINTN EndX;
+  UINTN EndY;
+  UINTN RowBytes;
+
+  if ((Stride == NULL) ||
+      (X > MAX_UINTN - Width) ||
+      (Y > MAX_UINTN - Height))
+  {
+    return FALSE;
+  }
+
+  EndX = X + Width;
+  EndY = Y + Height;
+  if (EndX > (MAX_UINTN / sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL))) {
+    return FALSE;
+  }
+
+  RowBytes = EndX * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL);
+  *Stride  = (Delta == 0) ? Width * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL) : Delta;
+  if ((*Stride < RowBytes) ||
+      ((EndY - 1U) > ((MAX_UINTN - RowBytes) / *Stride)))
+  {
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+STATIC
+VOID
+FillTarget (
+  IN CONST BARLEY_SCANOUT_TARGET         *Target,
+  IN CONST EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color,
+  IN UINTN                                DestinationX,
+  IN UINTN                                DestinationY,
+  IN UINTN                                Width,
+  IN UINTN                                Height
+  )
+{
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL OpaqueColor;
+  UINT32                        Pixel;
+
+  OpaqueColor          = *Color;
+  OpaqueColor.Reserved = 0xFF;
+  CopyMem (&Pixel, &OpaqueColor, sizeof (Pixel));
+
+  for (UINTN Row = 0; Row < Height; Row++) {
+    VOID *Destination;
+
+    Destination = (VOID *)(UINTN)(
+                    Target->Base +
+                    ((DestinationY + Row) * Target->Pitch) +
+                    (DestinationX * BARLEY_DISPLAY_BYTES_PER_PIXEL)
+                    );
+    SetMem32 (Destination, Width * sizeof (Pixel), Pixel);
+  }
+}
+
+STATIC
+VOID
+BufferToVideoTarget (
+  IN CONST BARLEY_SCANOUT_TARGET     *Target,
+  IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL   *BltBuffer,
+  IN UINTN                            SourceX,
+  IN UINTN                            SourceY,
+  IN UINTN                            DestinationX,
+  IN UINTN                            DestinationY,
+  IN UINTN                            Width,
+  IN UINTN                            Height,
+  IN UINTN                            SourceStride
+  )
+{
+  for (UINTN Row = 0; Row < Height; Row++) {
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL *SourceRow;
+    volatile UINT32              *DestinationRow;
+
+    SourceRow = (EFI_GRAPHICS_OUTPUT_BLT_PIXEL *)(
+                  (UINT8 *)BltBuffer + ((SourceY + Row) * SourceStride)
+                  ) + SourceX;
+    DestinationRow = (volatile UINT32 *)(UINTN)(
+                       Target->Base +
+                       ((DestinationY + Row) * Target->Pitch) +
+                       (DestinationX * BARLEY_DISPLAY_BYTES_PER_PIXEL)
+                       );
+
+    for (UINTN Column = 0; Column < Width; Column++) {
+      EFI_GRAPHICS_OUTPUT_BLT_PIXEL Pixel;
+      UINT32                        PackedPixel;
+
+      Pixel          = SourceRow[Column];
+      Pixel.Reserved = 0xFF;
+      CopyMem (&PackedPixel, &Pixel, sizeof (PackedPixel));
+      DestinationRow[Column] = PackedPixel;
+    }
+  }
+}
+
+STATIC
+VOID
+VideoToBufferTarget (
+  IN CONST BARLEY_SCANOUT_TARGET *Target,
+  OUT EFI_GRAPHICS_OUTPUT_BLT_PIXEL *BltBuffer,
+  IN UINTN SourceX,
+  IN UINTN SourceY,
+  IN UINTN DestinationX,
+  IN UINTN DestinationY,
+  IN UINTN Width,
+  IN UINTN Height,
+  IN UINTN DestinationStride
+  )
+{
+  for (UINTN Row = 0; Row < Height; Row++) {
+    CONST VOID *Source;
+    VOID       *Destination;
+
+    Source = (CONST VOID *)(UINTN)(
+               Target->Base +
+               ((SourceY + Row) * Target->Pitch) +
+               (SourceX * BARLEY_DISPLAY_BYTES_PER_PIXEL)
+               );
+    Destination = (UINT8 *)BltBuffer +
+                  ((DestinationY + Row) * DestinationStride) +
+                  (DestinationX * sizeof (*BltBuffer));
+    CopyMem (Destination, Source, Width * sizeof (*BltBuffer));
+  }
+}
+
+STATIC
+VOID
+VideoToVideoTarget (
+  IN CONST BARLEY_SCANOUT_TARGET *Target,
+  IN UINTN                        SourceX,
+  IN UINTN                        SourceY,
+  IN UINTN                        DestinationX,
+  IN UINTN                        DestinationY,
+  IN UINTN                        Width,
+  IN UINTN                        Height,
+  IN VOID                        *LineBuffer
+  )
+{
+  BOOLEAN Reverse;
+
+  Reverse = DestinationY > SourceY;
+  for (UINTN Index = 0; Index < Height; Index++) {
+    UINTN       Row;
+    CONST VOID *Source;
+    VOID       *Destination;
+
+    Row = Reverse ? (Height - 1U - Index) : Index;
+    Source = (CONST VOID *)(UINTN)(
+               Target->Base +
+               ((SourceY + Row) * Target->Pitch) +
+               (SourceX * BARLEY_DISPLAY_BYTES_PER_PIXEL)
+               );
+    Destination = (VOID *)(UINTN)(
+                    Target->Base +
+                    ((DestinationY + Row) * Target->Pitch) +
+                    (DestinationX * BARLEY_DISPLAY_BYTES_PER_PIXEL)
+                    );
+    CopyMem (LineBuffer, Source, Width * BARLEY_DISPLAY_BYTES_PER_PIXEL);
+    CopyMem (Destination, LineBuffer, Width * BARLEY_DISPLAY_BYTES_PER_PIXEL);
+  }
 }
 
 STATIC
@@ -311,9 +457,11 @@ BarleyBlt (
   IN UINTN                              Delta OPTIONAL
   )
 {
-  EFI_STATUS Status;
+  UINTN      BufferStride;
+  VOID      *LineBuffer;
   EFI_TPL    OldTpl;
-  UINTN      Limit;
+  EFI_STATUS Status;
+  UINTN      TargetLimit;
 
   if ((This == NULL) || (Width == 0) || (Height == 0) ||
       (BltOperation >= EfiGraphicsOutputBltOperationMax))
@@ -321,25 +469,147 @@ BarleyBlt (
     return EFI_INVALID_PARAMETER;
   }
 
-  OldTpl = gBS->RaiseTPL (TPL_NOTIFY);
-  Status = EFI_SUCCESS;
-  Limit  = (BltOperation == EfiBltVideoToBltBuffer) ? 1U : mTargetCount;
+  BufferStride = 0;
+  LineBuffer   = NULL;
 
-  for (UINTN Index = 0; Index < Limit; Index++) {
-    Status = FrameBufferBlt (
-               mTargets[Index].Configuration,
-               BltBuffer,
-               BltOperation,
-               SourceX,
-               SourceY,
-               DestinationX,
-               DestinationY,
-               Width,
-               Height,
-               Delta
-               );
-    if (EFI_ERROR (Status)) {
+  switch (BltOperation) {
+    case EfiBltVideoFill:
+      if ((BltBuffer == NULL) ||
+          !VideoRectangleValid (
+             DestinationX,
+             DestinationY,
+             Width,
+             Height
+             ))
+      {
+        return EFI_INVALID_PARAMETER;
+      }
+
       break;
+
+    case EfiBltBufferToVideo:
+      if ((BltBuffer == NULL) ||
+          !VideoRectangleValid (
+             DestinationX,
+             DestinationY,
+             Width,
+             Height
+             ) ||
+          !GetBufferStride (
+             SourceX,
+             SourceY,
+             Width,
+             Height,
+             Delta,
+             &BufferStride
+             ))
+      {
+        return EFI_INVALID_PARAMETER;
+      }
+
+      break;
+
+    case EfiBltVideoToBltBuffer:
+      if ((BltBuffer == NULL) ||
+          !VideoRectangleValid (SourceX, SourceY, Width, Height) ||
+          !GetBufferStride (
+             DestinationX,
+             DestinationY,
+             Width,
+             Height,
+             Delta,
+             &BufferStride
+             ))
+      {
+        return EFI_INVALID_PARAMETER;
+      }
+
+      break;
+
+    case EfiBltVideoToVideo:
+      if (!VideoRectangleValid (SourceX, SourceY, Width, Height) ||
+          !VideoRectangleValid (
+             DestinationX,
+             DestinationY,
+             Width,
+             Height
+             ))
+      {
+        return EFI_INVALID_PARAMETER;
+      }
+
+      LineBuffer = AllocatePool (Width * BARLEY_DISPLAY_BYTES_PER_PIXEL);
+      if (LineBuffer == NULL) {
+        return EFI_OUT_OF_RESOURCES;
+      }
+
+      break;
+
+    default:
+      return EFI_INVALID_PARAMETER;
+  }
+
+  OldTpl      = gBS->RaiseTPL (TPL_NOTIFY);
+  Status      = EFI_SUCCESS;
+  TargetLimit = (BltOperation == EfiBltVideoToBltBuffer) ? 1U : mTargetCount;
+
+  for (UINTN Index = 0; Index < TargetLimit; Index++) {
+    switch (BltOperation) {
+      case EfiBltVideoFill:
+        FillTarget (
+          &mTargets[Index],
+          BltBuffer,
+          DestinationX,
+          DestinationY,
+          Width,
+          Height
+          );
+        break;
+
+      case EfiBltBufferToVideo:
+        BufferToVideoTarget (
+          &mTargets[Index],
+          BltBuffer,
+          SourceX,
+          SourceY,
+          DestinationX,
+          DestinationY,
+          Width,
+          Height,
+          BufferStride
+          );
+        break;
+
+      case EfiBltVideoToBltBuffer:
+        VideoToBufferTarget (
+          &mTargets[Index],
+          BltBuffer,
+          SourceX,
+          SourceY,
+          DestinationX,
+          DestinationY,
+          Width,
+          Height,
+          BufferStride
+          );
+        break;
+
+      case EfiBltVideoToVideo:
+        VideoToVideoTarget (
+          &mTargets[Index],
+          SourceX,
+          SourceY,
+          DestinationX,
+          DestinationY,
+          Width,
+          Height,
+          LineBuffer
+          );
+        break;
+
+      default:
+        Status = EFI_INVALID_PARAMETER;
+        break;
     }
 
     CleanDestination (
@@ -353,7 +623,42 @@ BarleyBlt (
   }
 
   gBS->RestoreTPL (OldTpl);
+  if (LineBuffer != NULL) {
+    FreePool (LineBuffer);
+  }
+
   return Status;
+}
+
+STATIC
+EFI_STATUS
+EFIAPI
+BarleySetMode (
+  IN EFI_GRAPHICS_OUTPUT_PROTOCOL *This,
+  IN UINT32                        ModeNumber
+  )
+{
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL Black;
+
+  if ((This == NULL) || (ModeNumber != 0)) {
+    return EFI_UNSUPPORTED;
+  }
+
+  ZeroMem (&Black, sizeof (Black));
+  Black.Reserved   = 0xFF;
+  This->Mode->Mode = 0;
+  return This->Blt (
+                 This,
+                 &Black,
+                 EfiBltVideoFill,
+                 0,
+                 0,
+                 0,
+                 0,
+                 BARLEY_DISPLAY_WIDTH,
+                 BARLEY_DISPLAY_HEIGHT,
+                 0
+                 );
 }
 
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL mGop = {
@@ -370,11 +675,7 @@ BarleyLkGopDxeEntryPoint (
   IN EFI_SYSTEM_TABLE *SystemTable
   )
 {
-  EFI_GRAPHICS_OUTPUT_BLT_PIXEL Black;
-  EFI_GRAPHICS_OUTPUT_BLT_PIXEL White;
-  EFI_STATUS                    Status;
-
-  BarleyEarlyVisualTrace (BARLEY_TRACE_STAGE_GOP_ENTRY, 0, 0);
+  EFI_STATUS Status;
 
   DiscoverLiveTargets ();
   Status = ConfigureTargets ();
@@ -394,34 +695,5 @@ BarleyLkGopDxeEntryPoint (
     return Status;
   }
 
-  ZeroMem (&Black, sizeof (Black));
-  SetMem (&White, sizeof (White), 0xFF);
-  Status = mGop.Blt (
-                  &mGop,
-                  &Black,
-                  EfiBltVideoFill,
-                  0,
-                  0,
-                  0,
-                  0,
-                  BARLEY_DISPLAY_WIDTH,
-                  BARLEY_DISPLAY_HEIGHT,
-                  0
-                  );
-  if (!EFI_ERROR (Status)) {
-    Status = mGop.Blt (
-                    &mGop,
-                    &White,
-                    EfiBltVideoFill,
-                    0,
-                    0,
-                    100,
-                    300,
-                    1000,
-                    1320,
-                    0
-                    );
-  }
-
-  return Status;
+  return mGop.SetMode (&mGop, 0);
 }

@@ -42,7 +42,8 @@ READ_LOCK_STATUS   = TRUE
 
   INF ShellPkg/Application/Shell/Shell.inf
 
-  # No storage, USB, RTC, PMIC, GPIO, ACPI, SMBIOS, or RAM manager in M2.13.
+  # Deliberately omit storage, USB, PMIC/GPIO, ACPI, SMBIOS, and RAM manager
+  # until the core shell environment is proven independently of peripherals.
 
 [FV.FVMAIN_COMPACT]
 FvAlignment        = 8

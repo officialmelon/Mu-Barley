@@ -21,10 +21,6 @@
 
 !include MT6768Pkg/MT6768Pkg.dsc.inc
 
-[BuildOptions]
-  *_CLANGPDB_AARCH64_CC_FLAGS = -D BARLEY_STAGE_TRACE=1
-  *_CLANGPDB_AARCH64_PP_FLAGS = -D BARLEY_STAGE_TRACE=1
-
 [PcdsFixedAtBuild]
   #
   # DDR Memory
@@ -61,13 +57,14 @@
 [LibraryClasses]
   FdtLib|MdePkg/Library/BaseFdtLib/BaseFdtLib.inf
   MemoryMapLib|barleyPkg/Library/MemoryMapLib/MemoryMapLib.inf
+  PlatformSecLib|barleyPkg/Library/PlatformSecLib/PlatformSecLib.inf
+  DeviceBootManagerLib|barleyPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.inf
   ShellLib|ShellPkg/Library/UefiShellLib/UefiShellLib.inf
   ShellCommandLib|ShellPkg/Library/UefiShellCommandLib/UefiShellCommandLib.inf
   HandleParsingLib|ShellPkg/Library/UefiHandleParsingLib/UefiHandleParsingLib.inf
   OrderedCollectionLib|MdePkg/Library/BaseOrderedCollectionRedBlackTreeLib/BaseOrderedCollectionRedBlackTreeLib.inf
 
 [Components]
-  barleyPkg/Drivers/EarlyVisualTraceDxe/EarlyVisualTraceDxe.inf
   barleyPkg/Drivers/BarleyLkGopDxe/BarleyLkGopDxe.inf
 
   ShellPkg/Application/Shell/Shell.inf {
@@ -77,5 +74,4 @@
       NULL|ShellPkg/Library/UefiShellLevel2CommandsLib/UefiShellLevel2CommandsLib.inf
       NULL|ShellPkg/Library/UefiShellLevel1CommandsLib/UefiShellLevel1CommandsLib.inf
       NULL|ShellPkg/Library/UefiShellLevel3CommandsLib/UefiShellLevel3CommandsLib.inf
-      NULL|barleyPkg/Library/BarleyShellTraceLib/BarleyShellTraceLib.inf
   }

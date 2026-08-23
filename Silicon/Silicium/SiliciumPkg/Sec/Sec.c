@@ -18,16 +18,6 @@
 
 #include "Sec.h"
 
-#if BARLEY_STAGE_TRACE == 1
-VOID
-EFIAPI
-BarleyEarlyVisualTrace (
-  IN UINT32 Stage,
-  IN UINT32 PatternA,
-  IN UINT32 PatternB
-  );
-#endif
-
 #ifndef MDEPKG_NDEBUG
 STATIC
 VOID
@@ -128,9 +118,6 @@ SecMain (
   if (EFI_ERROR (Status)) {
     return;
   }
-#if BARLEY_STAGE_TRACE == 1
-  BarleyEarlyVisualTrace (9, 0, 0);
-#endif
 
   // Build CPU HOB
   BuildCpuHob (ArmGetPhysicalAddressBits (), PcdGet8 (PcdPrePiCpuIoSize));
@@ -155,9 +142,6 @@ SecMain (
   }
 
   // Load DXE Core
-#if BARLEY_STAGE_TRACE == 1
-  BarleyEarlyVisualTrace (10, 0, 0);
-#endif
   Status = LoadDxeCoreFromFv (NULL, 0);
   if (EFI_ERROR (Status)) {
     DEBUG ((EFI_D_ERROR, "Failed to Load DXE Core! Status = %r\n", Status));
@@ -169,11 +153,6 @@ SecEntry (
   IN UINTN StackBase,
   IN UINTN StackSize)
 {
-#if BARLEY_STAGE_TRACE == 1
-  /* Stage 8: C entry is reached only after the SEC stack is established. */
-  BarleyEarlyVisualTrace (8, 0, 0);
-#endif
-
   // Disable Data Cache
   ArmDisableDataCache ();
 

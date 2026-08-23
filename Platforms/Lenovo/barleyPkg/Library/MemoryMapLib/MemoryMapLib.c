@@ -3,8 +3,6 @@
 #include <Library/FdtLib.h>
 #include <Library/MemoryMapLib.h>
 
-#include <BarleyEarlyVisualTrace.h>
-
 #define BARLEY_LIVE_FDT_BASE       0x4BC80000ULL
 #define BARLEY_LIVE_FDT_MAX_SIZE   0x00080000U
 #define BARLEY_DRAM_BASE           0x40000000ULL

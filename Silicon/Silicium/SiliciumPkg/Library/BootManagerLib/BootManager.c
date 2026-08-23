@@ -23,16 +23,6 @@
 
 #include "BootManager.h"
 
-#if BARLEY_STAGE_TRACE == 1
-VOID
-EFIAPI
-BarleyEarlyVisualTrace (
-  IN UINT32 Stage,
-  IN UINT32 PatternA,
-  IN UINT32 PatternB
-  );
-#endif
-
 //
 // Global Variables
 //
@@ -110,9 +100,6 @@ PlatformBootManagerAfterConsole ()
 {
   EFI_STATUS                    Status      = EFI_SUCCESS;
   EFI_GRAPHICS_OUTPUT_PROTOCOL *GopProtocol = NULL;
-#if BARLEY_STAGE_TRACE == 1
-  EFI_BOOT_MANAGER_LOAD_OPTION  ShellOption = {0};
-#endif
 
   // Post Setup GOP
   PostGopSetup (&GopProtocol);
@@ -137,24 +124,6 @@ PlatformBootManagerAfterConsole ()
 
   // Execute Secondary After Console
   DeviceBootManagerAfterConsole ();
-
-#if BARLEY_STAGE_TRACE == 1
-  // Mark stage 13 only after the installed ConOut accepts an OutputString.
-  if ((gST->ConOut != NULL) &&
-      !EFI_ERROR (gST->ConOut->OutputString (
-                                  gST->ConOut,
-                                  L"Barley M2.13 execution trace\r\n"
-                                  )))
-  {
-    BarleyEarlyVisualTrace (13, 0, 0);
-  }
-  Status = MsBootOptionsLibGetDefaultBootApp (&ShellOption, NULL);
-  if (!EFI_ERROR (Status)) {
-    BarleyEarlyVisualTrace (14, 0, 0);
-    EfiBootManagerBoot (&ShellOption);
-    EfiBootManagerFreeLoadOption (&ShellOption);
-  }
-#endif
 }
 
 VOID

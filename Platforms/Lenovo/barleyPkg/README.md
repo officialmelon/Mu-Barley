@@ -79,13 +79,17 @@ range into one unsafe allocation.
 `BarleyLkGopDxe` wraps the display pipeline already configured by Lenovo LK; it
 does not initialize DSI, reset the panel, or change clocks/timings. At entry it
 reads the MT6768 OVL0, OVL0_2L, and RDMA0 configuration, derives enabled source
-addresses and pitch, and mirrors GOP BLTs to every valid live source plus the
-two diagnostic surfaces at `0x7A3F8000` and `0x7E605000`. LK expdb proves the
-handoff is OVL direct-link mode with `eBGRA8888`, 1200 x 1920 layers and pitches
-of 4800/4864 bytes. Observed OVL addresses include `0x7BCE0000`, `0x7C5C8000`,
-and `0x7CEB0000`; the 4864-byte-pitch surfaces are spaced by `0x008E8000`.
-`LK Framebuffer`, `LK Logo Surface`, and `Display Reserved` remain separate
-reserved descriptors. LK free mblock 11 remains omitted.
+addresses and pitch, and mirrors GOP BLTs only to enabled full-screen sources
+whose base is one of the three verified OVL framebuffers. Display MMIO is
+strictly read-only. The public GOP is `PixelBltOnly`; its direct BLT routines
+honor each target's 4800/4864-byte stride and force the BGRA alpha byte to
+`0xFF` for fills and buffer-to-video writes. LK expdb proves the handoff is OVL
+direct-link mode with `eBGRA8888`, 1200 x 1920 layers. Observed OVL addresses
+are `0x7BCE0000`, `0x7C5C8000`, and `0x7CEB0000`; the aligned surfaces are
+spaced by `0x008E8000`. The former guessed writes to `0x7A3F8000` and
+`0x7E605000` are gone. `LK Framebuffer`, `LK Logo Surface`, and `Display
+Reserved` remain separate reserved descriptors. LK free mblock 11 remains
+omitted.
 
 Buttons are intentionally omitted. Android evidence shows power and
 volume-down on `mtk-pmic-keys`, while volume-up is on `mtk-kpd`. Lancelot's
@@ -98,10 +102,12 @@ single-core boot exists.
 
 ## Reused MT6768 components
 
-The port reuses `PlatformSecLib`, `GpioImplLib`, `ClockImplLib`,
-`PmicWrapperImplLib`, and `MsdcImplLib`, plus the shared GPIO, clock, PMIC
-wrapper, MT6358 PMIC, MSDC, eMMC, and SD DXE drivers. None
-of those implementations is forked for Barley.
+The port reuses `GpioImplLib`, `ClockImplLib`, `PmicWrapperImplLib`, and
+`MsdcImplLib`. Barley overrides only `PlatformSecLib`: Lenovo LK has already
+entered at EL1, so its assembly initializer is a no-op and its C initializer
+only disables TOPRGU. This avoids the Lancelot-specific OVL mutation in the
+shared MT6768 library. Peripheral DXE drivers remain excluded from the minimal
+shell image until core boot is proven.
 
 ## M2 execution gate
 
@@ -110,8 +116,9 @@ verify framebuffer format/stride. The permanent packaging configuration uses
 the upstream `BootShim.bin + SILICIUM_UEFI.fd` layout, gzip compression matching
 the Lenovo kernel flow, and Android boot header v4. LK starts the shim as its
 kernel; the shim copies the appended 2 MiB FD to `0x4BD00000` and branches to
-it while preserving incoming `x0`. The FV-resident internal Shell is the M2.9
-default application after GraphicsConsole connects to `BarleyLkGopDxe`.
+it while preserving incoming `x0`. A Barley device boot-manager library launches
+the FV-resident internal Shell after GraphicsConsole connects to
+`BarleyLkGopDxe`.
 Preserve Lenovo preloader, ATF, TEE, LK, GPT, vendor_boot, and slot B. Physical
 testing is restricted to the already-proven `boot_a` test / `boot_b` recovery
 flow on the unlocked device.

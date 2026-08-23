@@ -19,7 +19,6 @@
   PcBdsPkg/PcBdsPkg.dec
   MdeModulePkg/MdeModulePkg.dec
   SiliciumPkg/SiliciumPkg.dec
-  ShellPkg/ShellPkg.dec
 
 [LibraryClasses]
   DebugLib
@@ -34,7 +33,6 @@
 
 [Guids]
   gMsBootPolicyFileGuid
-  gUefiShellFileGuid
 
 [Protocols]
   gEfiLoadedImageProtocolGuid

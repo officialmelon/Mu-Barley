@@ -16,10 +16,6 @@
 #include <Protocol/FirmwareVolume2.h>
 #include <Protocol/LoadedImage.h>
 
-#if BARLEY_STAGE_TRACE == 1
-extern EFI_GUID gUefiShellFileGuid;
-#endif
-
 EFI_STATUS
 BuildFwLoadOption (
   IN OUT EFI_BOOT_MANAGER_LOAD_OPTION *BootOption,
@@ -80,11 +76,7 @@ MsBootOptionsLibGetDefaultBootApp (
   IN OUT EFI_BOOT_MANAGER_LOAD_OPTION *LoadOption,
   IN     CHAR8                        *Parameter)
 {
-#if BARLEY_STAGE_TRACE == 1
-  return BuildFwLoadOption (LoadOption, &gUefiShellFileGuid, Parameter);
-#else
   return EFI_UNSUPPORTED;
-#endif
 }
 
 EFI_STATUS
