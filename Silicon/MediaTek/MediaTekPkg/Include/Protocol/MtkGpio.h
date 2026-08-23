@@ -10,7 +10,7 @@ typedef struct _MTK_GPIO_PROTOCOL MTK_GPIO_PROTOCOL;
   This Function Gets direction of the defined pin.
 
   @param[in]  Pin                          - The Pin.
-  @param[out] Direction                    - The Direction of the Pin.
+  @param[out] Direction                    - TRUE for input, FALSE for output.
 **/
 typedef
 EFI_STATUS
@@ -23,7 +23,7 @@ EFI_STATUS
   This Function Sets direction of the defined pin.
 
   @param[in] Pin                          - The Pin.
-  @param[in] Direction                    - The Direction of the Pin.
+  @param[in] Direction                    - TRUE for input, FALSE for output.
 **/
 typedef
 EFI_STATUS

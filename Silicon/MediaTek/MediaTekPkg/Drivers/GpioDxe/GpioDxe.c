@@ -38,12 +38,14 @@ GpioGetDir(
 {
   UINT32 Value;
 
-  if (Pin > gPlatformInfo.MaxPin)
+  if ((Pin > gPlatformInfo.MaxPin) || (Direction == NULL)) {
     return EFI_INVALID_PARAMETER;
+  }
 
-  // Read Pin Direction
+  // MediaTek GPIO direction bits are 1 for output and 0 for input.  The
+  // protocol exposes TRUE as input, matching SetDir() and its consumers.
   Value = GpioRead (gPlatformInfo.DirOffset + PIN_OFFSET(Pin));
-  *Direction = !!(Value & (1 << (Pin % 32)));
+  *Direction = ((Value & (1U << (Pin % 32))) == 0);
 
   return EFI_SUCCESS;
 }
@@ -53,16 +55,17 @@ GpioSetDir(
   IN UINT32  Pin,
   IN BOOLEAN Direction)
 {
-  UINT32 Value, Offset;
+  UINT32 Offset;
 
-  if (Pin > gPlatformInfo.MaxPin)
+  if (Pin > gPlatformInfo.MaxPin) {
     return EFI_INVALID_PARAMETER;
+  }
 
-  // Set Pin Direction
-  Offset = PIN_OFFSET (Pin) + (Direction ? gPlatformInfo.ResetOffset : gPlatformInfo.SetOffset);
-  Value = GpioRead (Offset);
-  Value |= (1 << (Pin % 32));
-  GpioWrite (Offset, Value);
+  // TRUE means input.  MediaTek's SET/RESET aliases are write-one registers;
+  // reading and writing their contents back can affect unrelated pins.
+  Offset = gPlatformInfo.DirOffset + PIN_OFFSET (Pin) +
+           (Direction ? gPlatformInfo.ResetOffset : gPlatformInfo.SetOffset);
+  GpioWrite (Offset, 1U << (Pin % 32));
 
   return EFI_SUCCESS;
 }
@@ -72,16 +75,21 @@ GpioGetState(
   IN  UINT32   Pin,
   OUT BOOLEAN *State)
 {
+  EFI_STATUS Status;
   UINT32 Value;
   BOOLEAN Direction;
 
-  if (Pin > gPlatformInfo.MaxPin)
+  if ((Pin > gPlatformInfo.MaxPin) || (State == NULL)) {
     return EFI_INVALID_PARAMETER;
+  }
 
-  // Read Pin State
-  GpioGetDir (Pin, &Direction);
+  Status = GpioGetDir (Pin, &Direction);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
   Value = GpioRead ((Direction ? gPlatformInfo.DataInOffset : gPlatformInfo.DataOutOffset) + PIN_OFFSET(Pin));
-  *State = !!(Value & (1 << (Pin % 32)));
+  *State = ((Value & (1U << (Pin % 32))) != 0);
 
   return EFI_SUCCESS;
 }
@@ -91,16 +99,14 @@ GpioSetState(
   IN UINT32  Pin,
   IN BOOLEAN State)
 {
-  UINT32 Value, Offset;
+  UINT32 Offset;
 
-  if (Pin > gPlatformInfo.MaxPin)
+  if (Pin > gPlatformInfo.MaxPin) {
     return EFI_INVALID_PARAMETER;
+  }
 
-  // Set Pin State
   Offset = gPlatformInfo.DataOutOffset + (State ? gPlatformInfo.SetOffset : gPlatformInfo.ResetOffset) + PIN_OFFSET(Pin);
-  Value = GpioRead (Offset);
-  Value |= (1 << (Pin % 32));
-  GpioWrite (Offset, Value);
+  GpioWrite (Offset, 1U << (Pin % 32));
 
   return EFI_SUCCESS;
 }
@@ -110,25 +116,19 @@ GpioSetMode(
   IN UINT32 Pin,
   IN UINT32 Mode)
 {
-  UINT32 SetValue, ResetValue, Offset;
-  UINT32 ModeBits = (Mode << PIN_MODE_BIT (Pin));
+  UINT32 ModeMask;
+  UINT32 Offset;
 
-  if (Pin > gPlatformInfo.MaxPin)
+  if ((Pin > gPlatformInfo.MaxPin) || (Mode > 7)) {
     return EFI_INVALID_PARAMETER;
+  }
 
   Offset = gPlatformInfo.ModeOffset + PIN_MODE_OFFSET (Pin);
+  ModeMask = 0x7U << PIN_MODE_BIT (Pin);
 
-  // Read current Mode
-  SetValue = GpioRead (Offset + gPlatformInfo.SetOffset);
-  ResetValue = GpioRead (Offset + gPlatformInfo.ResetOffset);
-
-  // Set new Mode
-  SetValue |= ModeBits;
-  ResetValue |= (~ModeBits) & (0x7 << PIN_MODE_BIT (Pin));
-
-  // Write new Mode
-  GpioWrite (Offset + gPlatformInfo.SetOffset, SetValue);
-  GpioWrite (Offset + gPlatformInfo.ResetOffset, ResetValue);
+  // Program only this pin's three mode bits through the write-one aliases.
+  GpioWrite (Offset + gPlatformInfo.ResetOffset, ModeMask);
+  GpioWrite (Offset + gPlatformInfo.SetOffset, Mode << PIN_MODE_BIT (Pin));
 
   return EFI_SUCCESS;
 }
