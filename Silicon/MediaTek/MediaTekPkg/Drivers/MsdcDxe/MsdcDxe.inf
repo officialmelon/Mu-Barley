@@ -37,6 +37,8 @@
 [FixedPcd]
   gMediaTekPkgTokenSpaceGuid.PcdStorageIsEMMC
   gMediaTekPkgTokenSpaceGuid.PcdMsdcHostMask
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcPreserveBootStateMask
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableMaxClockHz
 
 [Depex]
   gMediaTekGpioProtocolGuid AND

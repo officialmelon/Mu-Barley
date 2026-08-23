@@ -158,7 +158,9 @@ PowerControl (
   IN UINT32  Index,
   IN BOOLEAN Enable)
 {
-  EFI_STATUS Status;
+  CONST CHAR8 *VmmcRegulator;
+  CONST CHAR8 *VqmmcRegulator;
+  EFI_STATUS   Status;
 
   if (Index >= gPlatformInfo.NumberOfHosts) {
     return EFI_INVALID_PARAMETER;
@@ -172,6 +174,9 @@ PowerControl (
     return EFI_NOT_READY;
   }
 
+  VmmcRegulator  = (CONST CHAR8 *)FixedPcdGetPtr (PcdMsdcRemovableVmmcRegulatorName);
+  VqmmcRegulator = (CONST CHAR8 *)FixedPcdGetPtr (PcdMsdcRemovableVqmmcRegulatorName);
+
   if (Index == 0 && FixedPcdGetBool(PcdStorageIsEMMC)) {
     // LK has already powered and trained the soldered eMMC.  Preserve its
     // voltage selection and only ensure that the inherited rail stays on.
@@ -182,29 +187,29 @@ PowerControl (
     }
     return Status;
   } else if (Enable) {
-    Status = mPmic->RegulatorSetVoltage("ldo_vmch", MSDC_SUPPLY_VOLTAGE_UV);
+    Status = mPmic->RegulatorSetVoltage(VmmcRegulator, MSDC_SUPPLY_VOLTAGE_UV);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_ERROR, "Failed to Set LDO VMCH Voltage! Status = %r\n", Status));
       return Status;
     }
 
-    Status = mPmic->RegulatorSetVoltage("ldo_vmc", MSDC_SUPPLY_VOLTAGE_UV);
+    Status = mPmic->RegulatorSetVoltage(VqmmcRegulator, MSDC_SUPPLY_VOLTAGE_UV);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_ERROR, "Failed to Set LDO VMC Voltage! Status = %r\n", Status));
       return Status;
     }
 
-    Status = mPmic->RegulatorSetEnable("ldo_vmch", TRUE);
+    Status = mPmic->RegulatorSetEnable(VmmcRegulator, TRUE);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_ERROR, "Failed to Enable LDO VMCH! Status = %r\n", Status));
       return Status;
     }
 
-    Status = mPmic->RegulatorSetEnable("ldo_vmc", TRUE);
+    Status = mPmic->RegulatorSetEnable(VqmmcRegulator, TRUE);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_ERROR, "Failed to Enable LDO VMC! Status = %r\n", Status));
       // Do not leave the card supply enabled after its I/O rail failed.
-      mPmic->RegulatorSetEnable("ldo_vmch", FALSE);
+      mPmic->RegulatorSetEnable(VmmcRegulator, FALSE);
       return Status;
     }
 
@@ -212,19 +217,59 @@ PowerControl (
   } else {
     // Remove the I/O rail first so it cannot back-power a card whose main
     // supply has already been disabled.
-    Status = mPmic->RegulatorSetEnable("ldo_vmc", FALSE);
+    Status = mPmic->RegulatorSetEnable(VqmmcRegulator, FALSE);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_ERROR, "Failed to Disable LDO VMC! Status = %r\n", Status));
       return Status;
     }
 
-    Status = mPmic->RegulatorSetEnable("ldo_vmch", FALSE);
+    Status = mPmic->RegulatorSetEnable(VmmcRegulator, FALSE);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_ERROR, "Failed to Disable LDO VMCH! Status = %r\n", Status));
     }
 
     return Status;
   }
+}
+
+EFI_STATUS
+GetCardPresent (
+  IN  UINT32   Index,
+  OUT BOOLEAN *Present
+  )
+{
+  EFI_STATUS Status;
+  UINT32     CardDetectPin;
+  BOOLEAN    PinState;
+
+  if ((Index >= gPlatformInfo.NumberOfHosts) || (Present == NULL)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  // Host 0 is the soldered eMMC on MT6768 platforms that advertise eMMC.
+  if ((Index == 0) && FixedPcdGetBool (PcdStorageIsEMMC)) {
+    *Present = TRUE;
+    return EFI_SUCCESS;
+  }
+
+  CardDetectPin = FixedPcdGet32 (PcdMsdcRemovableCardDetectPin);
+  if (CardDetectPin == MAX_UINT32) {
+    *Present = TRUE;
+    return EFI_SUCCESS;
+  }
+
+  if (mGpio == NULL) {
+    return EFI_NOT_READY;
+  }
+
+  // Read the LK-established GPIO state without changing pinmux or direction.
+  Status = mGpio->GetState (CardDetectPin, &PinState);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  *Present = (PinState == FixedPcdGetBool (PcdMsdcRemovableCardDetectActiveHigh));
+  return EFI_SUCCESS;
 }
 
 EFI_STATUS

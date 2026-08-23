@@ -19,6 +19,7 @@
   UefiBootServicesTableLib
   UefiDriverEntryPoint
   DebugLib
+  TimerLib
 
 [Protocols]
   gMediaTekPmicWrapperProtocolGuid  ## CONSUMES

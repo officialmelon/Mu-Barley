@@ -2,6 +2,7 @@
 #include <Library/BaseLib.h>
 #include <Library/DebugLib.h>
 #include <Library/IoLib.h>
+#include <Library/TimerLib.h>
 
 #include <Protocol/MtkPmicWrapper.h>
 #include <Protocol/MtkPmic.h>
@@ -12,8 +13,14 @@
 
 #define MT6358_CON0_ENABLE_MASK BIT0
 
+#define MT6358_VMCH_EINT_CON0       0x1D70
+#define MT6358_VMCH_EINT_ENABLE     BIT0
+#define MT6358_VMCH_EINT_POLARITY   BIT2
+#define MT6358_VMCH_EINT_SETTLE_US  1500
+
 typedef enum {
   Ldo,
+  VmchEintLowLdo,
   FixedLdo,
   Buck
 } MTK_REGULATOR_TYPE;
@@ -464,6 +471,21 @@ STATIC CONST MTK_REGULATOR_DESC mRegulators[] = {
     },
   },
   {
+    // Some MT6358 boards route the SD-card VMMC request through the PMIC's
+    // active-low external-input control instead of the ordinary VMCH supply.
+    .Name = "ldo_vmch_eint_low",
+    .Type = VmchEintLowLdo,
+    .Ldo  =
+    {
+      .Con0Reg    = 0x1cd8,
+      .AnaReg     = 0x1e48,
+      .VoselShift = 8,
+      .VoselMask  = 0x7,
+      .Ranges     = mVmchVemcRanges,
+      .RangesLen  = ARRAY_SIZE (mVmchVemcRanges),
+    },
+  },
+  {
     .Name = "ldo_vcama1",
     .Type = Ldo,
     .Ldo  =
@@ -577,6 +599,79 @@ GetRegulatorByName(
   return NULL;
 }
 
+STATIC
+EFI_STATUS
+PmicUpdateBits (
+  IN UINT16 Register,
+  IN UINT16 Mask,
+  IN UINT16 Value
+  )
+{
+  EFI_STATUS Status;
+  UINT16     RegisterValue;
+
+  Status = mPmicWrapper->Read (Register, &RegisterValue);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  RegisterValue = (RegisterValue & ~Mask) | (Value & Mask);
+  return mPmicWrapper->Write (Register, RegisterValue);
+}
+
+STATIC
+EFI_STATUS
+VmchEintLowSetEnable (
+  IN CONST MTK_REGULATOR_DESC *Regulator,
+  IN BOOLEAN                   Enable
+  )
+{
+  EFI_STATUS Status;
+  EFI_STATUS DisableStatus;
+
+  if (Enable) {
+    // Select active-low external control, enable the underlying VMCH rail,
+    // then arm the EINT gate.  Roll the rail back if the final step fails.
+    Status = PmicUpdateBits (
+               MT6358_VMCH_EINT_CON0,
+               MT6358_VMCH_EINT_POLARITY,
+               0
+               );
+    if (EFI_ERROR (Status)) {
+      return Status;
+    }
+
+    Status = PmicUpdateBits (
+               Regulator->Ldo.Con0Reg,
+               MT6358_CON0_ENABLE_MASK,
+               MT6358_CON0_ENABLE_MASK
+               );
+    if (EFI_ERROR (Status)) {
+      return Status;
+    }
+
+    Status = PmicUpdateBits (
+               MT6358_VMCH_EINT_CON0,
+               MT6358_VMCH_EINT_ENABLE,
+               MT6358_VMCH_EINT_ENABLE
+               );
+    if (EFI_ERROR (Status)) {
+      PmicUpdateBits (Regulator->Ldo.Con0Reg, MT6358_CON0_ENABLE_MASK, 0);
+    }
+
+    return Status;
+  }
+
+  Status = PmicUpdateBits (Regulator->Ldo.Con0Reg, MT6358_CON0_ENABLE_MASK, 0);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  MicroSecondDelay (MT6358_VMCH_EINT_SETTLE_US);
+  DisableStatus = PmicUpdateBits (MT6358_VMCH_EINT_CON0, MT6358_VMCH_EINT_ENABLE, 0);
+  return DisableStatus;
+}
+
 VOID
 PowerButtonPressed (
   OUT BOOLEAN *Pressed)
@@ -639,6 +734,8 @@ RegulatorSetEnable(
   }
 
   switch (Regulator->Type) {
+  case VmchEintLowLdo:
+    return VmchEintLowSetEnable (Regulator, Enable);
   case Ldo:
     // Write enable bit to CON0 register
     Status = mPmicWrapper->Read(Regulator->Ldo.Con0Reg, &Value);
@@ -702,6 +799,24 @@ RegulatorIsEnabled(
   }
 
   switch (Regulator->Type) {
+  case VmchEintLowLdo:
+    Status = mPmicWrapper->Read (Regulator->Ldo.Con0Reg, &Value);
+    if (EFI_ERROR (Status)) {
+      return Status;
+    }
+
+    if ((Value & MT6358_CON0_ENABLE_MASK) == 0) {
+      *Enabled = FALSE;
+      return EFI_SUCCESS;
+    }
+
+    Status = mPmicWrapper->Read (MT6358_VMCH_EINT_CON0, &Value);
+    if (EFI_ERROR (Status)) {
+      return Status;
+    }
+
+    *Enabled = ((Value & MT6358_VMCH_EINT_ENABLE) != 0);
+    return EFI_SUCCESS;
   case Ldo:
     // Read enable bit from CON0 register
     Status = mPmicWrapper->Read(Regulator->Ldo.Con0Reg, &Value);
@@ -749,6 +864,7 @@ RegulatorSetVoltage(
   }
 
   switch (Regulator->Type) {
+  case VmchEintLowLdo:
   case Ldo:
     UINTN Index;
     UINT8 Vosel;
@@ -821,6 +937,7 @@ RegulatorGetVoltage(
   }
 
   switch (Regulator->Type) {
+  case VmchEintLowLdo:
   case Ldo:
     // Read voltage selection from Analog register
     Status = mPmicWrapper->Read(Regulator->Ldo.AnaReg, &Value);

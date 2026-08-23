@@ -37,6 +37,12 @@ PowerControl (
   );
 
 EFI_STATUS
+GetCardPresent (
+  IN  UINT32   Index,
+  OUT BOOLEAN *Present
+  );
+
+EFI_STATUS
 InitGpio (
   IN UINT32 Index
   );

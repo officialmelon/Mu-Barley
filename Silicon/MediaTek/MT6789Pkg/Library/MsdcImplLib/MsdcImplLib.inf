@@ -29,3 +29,7 @@
 [FixedPcd]
   gMediaTekPkgTokenSpaceGuid.PcdStorageIsEMMC
   gMediaTekPkgTokenSpaceGuid.PcdMsdcPreserveBootStateMask
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableVmmcRegulatorName
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableVqmmcRegulatorName
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableCardDetectPin
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableCardDetectActiveHigh

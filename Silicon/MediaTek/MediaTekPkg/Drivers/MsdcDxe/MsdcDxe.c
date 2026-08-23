@@ -1430,6 +1430,10 @@ CardSetBusMode (
     return EFI_DEVICE_ERROR;
   }
 
+  if (Private->SdInfo.CardType == SdCard) {
+    return MsdcSetMclk (Private, FixedPcdGet32 (PcdMsdcRemovableMaxClockHz));
+  }
+
   return MsdcSetMclk (Private, 50 * 1000 * 1000);
 }
 
@@ -1602,10 +1606,22 @@ InitMsdc (
   MSDC_DEVICE_PATH* DevicePath;
   EFI_MEMORY_REGION_DESCRIPTOR Region;
   CHAR8 MsdcName[11];
+  BOOLEAN Present;
 
   Status = EFI_SUCCESS;
   for (UINTN i = 0; i < gPlatformInfo.NumberOfHosts; i++) {
     if ((FixedPcdGet32 (PcdMsdcHostMask) & (1U << i)) == 0) {
+      continue;
+    }
+
+    Status = GetCardPresent (i, &Present);
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_ERROR, "MsdcDxe: failed to read card detect for host %u: %r\n", i, Status));
+      continue;
+    }
+
+    if (!Present) {
+      DEBUG ((DEBUG_INFO, "MsdcDxe: no card present on removable host %u\n", i));
       continue;
     }
 
@@ -1654,6 +1670,9 @@ InitMsdc (
     Status = MsdcInit (Private);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_ERROR, "MsdcDxe: failed to initialize host %u: %r\n", i, Status));
+      if ((FixedPcdGet32 (PcdMsdcPreserveBootStateMask) & (1U << i)) == 0) {
+        ClockControl (i, FALSE);
+      }
       FreePool (DevicePath);
       FreePool (Private);
       continue;
@@ -1667,6 +1686,10 @@ InitMsdc (
 
     if (EFI_ERROR(Status)) {
       DEBUG ((DEBUG_ERROR, "MsdcDxe: no usable card on host %u: %r\n", i, Status));
+      if ((FixedPcdGet32 (PcdMsdcPreserveBootStateMask) & (1U << i)) == 0) {
+        PowerControl (i, FALSE);
+        ClockControl (i, FALSE);
+      }
       FreePool (Private);
       FreePool (DevicePath);
       continue;
@@ -1679,6 +1702,10 @@ InitMsdc (
                     NULL
                     );
     if (EFI_ERROR (Status)) {
+      if ((FixedPcdGet32 (PcdMsdcPreserveBootStateMask) & (1U << i)) == 0) {
+        PowerControl (i, FALSE);
+        ClockControl (i, FALSE);
+      }
       FreePool (DevicePath);
       FreePool (Private);
       continue;

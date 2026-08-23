@@ -23,3 +23,11 @@
   gMediaTekPkgTokenSpaceGuid.PcdMsdcHostMask|0xFFFFFFFF|UINT32|0x0000E101
   # Bit mask of MSDC hosts whose LK-established power and pinmux state is retained.
   gMediaTekPkgTokenSpaceGuid.PcdMsdcPreserveBootStateMask|0x0|UINT32|0x0000E102
+  # Board-selected supplies for removable MSDC hosts.
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableVmmcRegulatorName|"ldo_vmch"|VOID*|0x0000E103
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableVqmmcRegulatorName|"ldo_vmc"|VOID*|0x0000E104
+  # Optional card-detect GPIO.  0xFFFFFFFF preserves the legacy probe behavior.
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableCardDetectPin|0xFFFFFFFF|UINT32|0x0000E105
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableCardDetectActiveHigh|FALSE|BOOLEAN|0x0000E106
+  # Conservative default for an initialized removable card.
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableMaxClockHz|50000000|UINT32|0x0000E107
