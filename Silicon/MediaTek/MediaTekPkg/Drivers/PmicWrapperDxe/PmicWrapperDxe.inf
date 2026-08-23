@@ -25,7 +25,7 @@
   PmicWrapperImplLib
 
 [Protocols]
-  gMediaTekPmicWrapperProtocolGuid
+  gMediaTekPmicWrapperProtocolGuid  ## PRODUCES
 
 [Depex]
   TRUE

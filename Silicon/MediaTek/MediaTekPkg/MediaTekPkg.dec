@@ -19,3 +19,7 @@
 [PcdsFixedAtBuild]
   # Storage
   gMediaTekPkgTokenSpaceGuid.PcdStorageIsEMMC|FALSE|BOOLEAN|0x0000E100
+  # Bit mask of MSDC host indices exposed by the platform.
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcHostMask|0xFFFFFFFF|UINT32|0x0000E101
+  # Bit mask of MSDC hosts whose LK-established power and pinmux state is retained.
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcPreserveBootStateMask|0x0|UINT32|0x0000E102

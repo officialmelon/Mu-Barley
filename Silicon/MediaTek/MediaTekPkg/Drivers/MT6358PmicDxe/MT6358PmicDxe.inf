@@ -21,8 +21,8 @@
   DebugLib
 
 [Protocols]
-  gMediaTekPmicWrapperProtocolGuid
-  gMediaTekPmicProtocolGuid
+  gMediaTekPmicWrapperProtocolGuid  ## CONSUMES
+  gMediaTekPmicProtocolGuid         ## PRODUCES
 
 [Depex]
-  TRUE
+  gMediaTekPmicWrapperProtocolGuid

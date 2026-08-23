@@ -25,10 +25,20 @@
   TimerLib
   DebugLib
   IoLib
+  PcdLib
   MsdcImplLib
 
 [Protocols]
-  gEfiSdMmcPassThruProtocolGuid
+  gMediaTekGpioProtocolGuid       ## CONSUMES
+  gMediaTekClockProtocolGuid      ## CONSUMES
+  gMediaTekPmicProtocolGuid       ## CONSUMES
+  gEfiSdMmcPassThruProtocolGuid   ## PRODUCES
+
+[FixedPcd]
+  gMediaTekPkgTokenSpaceGuid.PcdStorageIsEMMC
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcHostMask
 
 [Depex]
-  TRUE
+  gMediaTekGpioProtocolGuid AND
+  gMediaTekClockProtocolGuid AND
+  gMediaTekPmicProtocolGuid

@@ -13,7 +13,7 @@ typedef struct _MTK_PMIC_WRAPPER_PROTOCOL MTK_PMIC_WRAPPER_PROTOCOL;
   @param[out] Data                         - The Data.
 **/
 typedef
-VOID
+EFI_STATUS
 (EFIAPI *MTK_PMIC_WRAPPER_READ) (
   IN  UINT16  Address,
   OUT UINT16 *Value
@@ -26,7 +26,7 @@ VOID
   @param[in] Data                          - The Data.
 **/
 typedef
-VOID
+EFI_STATUS
 (EFIAPI *MTK_PMIC_WRAPPER_WRITE) (
   IN  UINT16 Address,
   IN  UINT16 Data

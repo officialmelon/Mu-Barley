@@ -1,5 +1,32 @@
 #include "MsdcDxe.h"
 
+#define MSDC_POLL_DELAY_US          100U
+#define MSDC_CONTROL_TIMEOUT_US     100000U
+#define MSDC_BUSY_TIMEOUT_US        20000U
+#define MSDC_COMMAND_TIMEOUT_US     1000000U
+#define MSDC_DATA_TIMEOUT_US        5000000U
+#define MSDC_OCR_RETRY_COUNT_EMMC   10U
+#define MSDC_OCR_RETRY_COUNT_SD     100U
+
+STATIC
+UINTN
+MsdcPollCount (
+  IN UINT64 PacketTimeout,
+  IN UINT32 DefaultTimeoutUs
+  )
+{
+  UINT64 TimeoutUs;
+
+  // EDK2's SD/eMMC bus drivers express this pass-through timeout in
+  // microseconds and decrement it once per 1-us host-controller poll.
+  TimeoutUs = (PacketTimeout == 0) ? DefaultTimeoutUs : PacketTimeout;
+  if (TimeoutUs > MSDC_DATA_TIMEOUT_US) {
+    TimeoutUs = MSDC_DATA_TIMEOUT_US;
+  }
+
+  return (UINTN)((TimeoutUs + MSDC_POLL_DELAY_US - 1) / MSDC_POLL_DELAY_US);
+}
+
 MSDC_PRIVATE_DATA gMSDCPrivateDataTemplate = {
   MSDC_PRIVATE_SIGNATURE, // Signature
   NULL, // ControllerHandle
@@ -78,9 +105,14 @@ MsdcPassThru (
   EFI_EVENT Event)
 {
   MSDC_PRIVATE_DATA *Private;
+  EFI_STATUS         Status;
 
-  if ((This == NULL) || (Packet == NULL)) {
+  if ((This == NULL) || (Packet == NULL) || (Slot != 0)) {
     return EFI_INVALID_PARAMETER;
+  }
+
+  if (Event != NULL) {
+    return EFI_UNSUPPORTED;
   }
 
   if ((Packet->SdMmcCmdBlk == NULL) || (Packet->SdMmcStatusBlk == NULL)) {
@@ -97,7 +129,9 @@ MsdcPassThru (
 
   Private = MSDC_PRIVATE_FROM_THIS (This);
 
-  return MsdcSendCmd (Private, Packet);
+  Status = MsdcSendCmd (Private, Packet);
+  Packet->TransactionStatus = Status;
+  return Status;
 }
 
 EFI_STATUS
@@ -194,30 +228,44 @@ MsdcResetDevice (
   return EFI_UNSUPPORTED;
 }
 
-VOID
+EFI_STATUS
 MsdcReset (
   MSDC_PRIVATE_DATA* Private)
 {
   UINT32 Reg;
+
   MsdcSetBits (Private, MSDC_CFG, MSDC_CFG_RST);
-  do
-  {
+  for (UINTN Poll = 0; Poll < MsdcPollCount (0, MSDC_CONTROL_TIMEOUT_US); Poll++) {
     MsdcRead (Private, MSDC_CFG, &Reg);
-    MicroSecondDelay (100);
-  } while (Reg & MSDC_CFG_RST);
+    if ((Reg & MSDC_CFG_RST) == 0) {
+      return EFI_SUCCESS;
+    }
+
+    MicroSecondDelay (MSDC_POLL_DELAY_US);
+  }
+
+  DEBUG ((DEBUG_ERROR, "MsdcDxe: controller %u reset timed out\n", Private->Index));
+  return EFI_TIMEOUT;
 }
 
-VOID
+EFI_STATUS
 MsdcClearFifo (
   MSDC_PRIVATE_DATA* Private)
 {
   UINT32 Reg;
+
   MsdcSetBits (Private, MSDC_FIFOCS, MSDC_FIFOCS_CLR);
-  do
-  {
+  for (UINTN Poll = 0; Poll < MsdcPollCount (0, MSDC_CONTROL_TIMEOUT_US); Poll++) {
     MsdcRead (Private, MSDC_FIFOCS, &Reg);
-    MicroSecondDelay (100);
-  } while (Reg & MSDC_FIFOCS_CLR);
+    if ((Reg & MSDC_FIFOCS_CLR) == 0) {
+      return EFI_SUCCESS;
+    }
+
+    MicroSecondDelay (MSDC_POLL_DELAY_US);
+  }
+
+  DEBUG ((DEBUG_ERROR, "MsdcDxe: controller %u FIFO clear timed out\n", Private->Index));
+  return EFI_TIMEOUT;
 }
 
 VOID
@@ -229,11 +277,15 @@ MsdcClearInterrupts (
   MsdcWrite (Private, MSDC_INT, Reg);
 }
 
-VOID
+EFI_STATUS
 MsdcSetTimeout (
   MSDC_PRIVATE_DATA* Private)
 {
   UINT32 CfgReg, Timeout, ClkNs;
+
+  if (Private->HostData.Sclk == 0) {
+    return EFI_NOT_READY;
+  }
 
   ClkNs = 1000000000 / Private->HostData.Sclk;
   Timeout = (Private->HostData.TimeoutNs + ClkNs - 1) / ClkNs + Private->HostData.TimeoutClks;
@@ -247,6 +299,7 @@ MsdcSetTimeout (
 
   CfgReg |= Timeout << 24;
   MsdcWrite (Private, SDC_CFG, CfgReg);
+  return EFI_SUCCESS;
 }
 
 VOID
@@ -279,14 +332,25 @@ MsdcSetBusWidth (
   MsdcWrite (Private, SDC_CFG, CfgReg);
 }
 
-VOID
+EFI_STATUS
 MsdcSetMclk (
   MSDC_PRIVATE_DATA* Private,
   UINT32 Hz)
 {
+  EFI_STATUS Status;
   UINTN SourceClock;
-  UINT32 Div, Mode;
-  GetSourceClockRate (Private->Index, &SourceClock);
+  UINT32 CfgReg;
+  UINT32 Div;
+  UINT32 Mode;
+
+  if (Hz == 0) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Status = GetSourceClockRate (Private->Index, &SourceClock);
+  if (EFI_ERROR (Status) || (SourceClock == 0)) {
+    return EFI_ERROR (Status) ? Status : EFI_NOT_READY;
+  }
 
   if (Hz >= SourceClock) {
     // Ignore divisor
@@ -307,7 +371,6 @@ MsdcSetMclk (
 
   DEBUG ((DEBUG_ERROR, "Hz: %d, Mode: %d, Div: %d, Sclk: %d\n", Hz, Mode, Div, Private->HostData.Sclk));
 
-  UINT32 CfgReg;
   MsdcRead (Private, MSDC_CFG, &CfgReg);
   // Clear CCKMD (BIT20:21)
   CfgReg &= ~(3 << 20);
@@ -315,54 +378,87 @@ MsdcSetMclk (
   CfgReg &= ~(0xfff << 8);
   // Clear hs400 div
   CfgReg &= ~(MSDC_CFG_HS400CKMD);
+  // The register snapshot was taken before the clock was gated below.  Do not
+  // accidentally restore CCKPD while programming the new divider.
+  CfgReg &= ~MSDC_CFG_CCKPD;
   // Set values
   CfgReg |= (Mode << 20);
   CfgReg |= (Div << 8);
 
-  // Disable source clock before changing mclk
+  // Stop only the controller's internal clock while changing its divider.
+  // LK may still have consumers on the shared MediaTek parent clock tree.
   MsdcClrBits (Private, MSDC_CFG, MSDC_CFG_CCKPD);
-  SourceClockControl (Private->Index, FALSE);
-  // Change configuration
-  MsdcWrite (Private, MSDC_CFG, CfgReg);
-  // Enable source clock
-  SourceClockControl (Private->Index, TRUE);
-  // Wait until clock will be stable
-  do
-  {
-    MsdcRead (Private, MSDC_CFG, &CfgReg);
-    MicroSecondDelay (100);
-  } while (!(CfgReg & MSDC_CFG_CCKSB));
+  Status = SourceClockControl (Private->Index, TRUE);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
 
-  // Reenable clock
+  MsdcWrite (Private, MSDC_CFG, CfgReg);
   MsdcSetBits (Private, MSDC_CFG, MSDC_CFG_CCKPD);
 
-  // Needed because clock has been changed
-  MsdcSetTimeout (Private);
+  for (UINTN Poll = 0; Poll < MsdcPollCount (0, MSDC_CONTROL_TIMEOUT_US); Poll++) {
+    MsdcRead (Private, MSDC_CFG, &CfgReg);
+    if ((CfgReg & MSDC_CFG_CCKSB) != 0) {
+      return MsdcSetTimeout (Private);
+    }
+
+    MicroSecondDelay (MSDC_POLL_DELAY_US);
+  }
+
+  DEBUG ((DEBUG_ERROR, "MsdcDxe: controller %u clock did not stabilize\n", Private->Index));
+  MsdcClrBits (Private, MSDC_CFG, MSDC_CFG_CCKPD);
+  return EFI_TIMEOUT;
 }
 
-VOID
-MsdcCheckBusy (
+#define MSDC_INT_CMDERR (MSDC_INT_CMDTMO | MSDC_INT_CMDCRCERR)
+#define MSDC_INT_ACMDERR (MSDC_INT_ACMDTMO | MSDC_INT_ACMDCRCERR)
+#define MSDC_INT_DATERR (MSDC_INT_DATTMO | MSDC_INT_DATCRCERR)
+#define MSDC_INT_CMDSTS (MSDC_INT_CMDRDY | MSDC_INT_CMDERR)
+#define MSDC_INT_AUTOSTS (MSDC_INT_ACMDRDY | MSDC_INT_ACMDERR)
+#define MSDC_INT_DATSTS (MSDC_INT_XFER_COMPL | MSDC_INT_DATERR | MSDC_INT_AUTOSTS)
+
+EFI_STATUS
+MsdcWaitReady (
   MSDC_PRIVATE_DATA* Private,
-  BOOLEAN *IsBusy)
+  BOOLEAN WaitDataBusy,
+  UINT64 PacketTimeout)
 {
   UINT32 Reg;
-  MsdcRead (Private, SDC_STS, &Reg);
-  *IsBusy = (Reg & SDC_STS_BUSY);
-}
+  UINT32 BusyMask;
 
-#define MSDC_INT_CMDSTS (MSDC_INT_CMDRDY  | MSDC_INT_CMDTMO  | MSDC_INT_CMDCRCERR | \
-                         MSDC_INT_ACMDRDY | MSDC_INT_ACMDTMO | MSDC_INT_ACMDCRCERR)
-#define MSDC_INT_DATSTS (MSDC_INT_DATTMO | MSDC_INT_DATCRCERR | MSDC_INT_XFER_COMPL)
+  // Linux's MediaTek host driver always waits for CMDBUSY to clear and also
+  // waits for SDCBUSY for R1B and data commands.  The two bits are not
+  // interchangeable.
+  BusyMask = SDC_STS_CMDBUSY;
+  if (WaitDataBusy) {
+    BusyMask |= SDC_STS_BUSY;
+  }
+
+  for (UINTN Poll = 0;
+       Poll < MsdcPollCount (PacketTimeout, MSDC_BUSY_TIMEOUT_US);
+       Poll++)
+  {
+    MsdcRead (Private, SDC_STS, &Reg);
+    if ((Reg & BusyMask) == 0) {
+      return EFI_SUCCESS;
+    }
+
+    MicroSecondDelay (MSDC_POLL_DELAY_US);
+  }
+
+  DEBUG ((
+    DEBUG_ERROR,
+    "MsdcDxe: controller %u remained busy (mask 0x%x)\n",
+    Private->Index,
+    BusyMask
+    ));
+  return EFI_TIMEOUT;
+}
 
 EFI_STATUS
 MsdcIntTrackError (
-  MSDC_PRIVATE_DATA* Private,
-  UINT32 IntMask,
   UINT32 IntStatus)
 {
-  // Clear interrupts
-  MsdcWrite (Private, MSDC_INT, IntStatus & IntMask);
-
   if (IntStatus & MSDC_INT_CMDTMO) {
     return EFI_TIMEOUT;
   }
@@ -394,23 +490,37 @@ EFI_STATUS
 MsdcPollInterrupts (
   MSDC_PRIVATE_DATA* Private,
   UINT32 ExpectedInterrupts,
-  UINT32 SuccessInterrupts)
+  UINT32 SuccessInterrupts,
+  UINT64 PacketTimeout)
 {
   UINT32 IntStatus;
+  UINT32 ObservedInterrupts;
 
-  while (TRUE) {
+  for (UINTN Poll = 0; Poll < MsdcPollCount (PacketTimeout, MSDC_COMMAND_TIMEOUT_US); Poll++) {
     MsdcRead (Private, MSDC_INT, &IntStatus);
-    if (IntStatus & (ExpectedInterrupts)) {
-      break;
+    ObservedInterrupts = IntStatus & ExpectedInterrupts;
+    if (ObservedInterrupts != 0) {
+      // MSDC_INT is write-one-to-clear.  Clear every status observed for this
+      // operation so a stale success/error cannot poison the next command.
+      MsdcWrite (Private, MSDC_INT, ObservedInterrupts);
+
+      // Errors win when hardware reports ready and an error simultaneously.
+      if ((ObservedInterrupts &
+           (MSDC_INT_CMDERR | MSDC_INT_ACMDERR | MSDC_INT_DATERR)) != 0)
+      {
+        return MsdcIntTrackError (ObservedInterrupts);
+      }
+
+      if ((ObservedInterrupts & SuccessInterrupts) == SuccessInterrupts) {
+        return EFI_SUCCESS;
+      }
     }
+
+    MicroSecondDelay (MSDC_POLL_DELAY_US);
   }
 
-  if (IntStatus & SuccessInterrupts) {
-    MsdcWrite (Private, MSDC_INT, IntStatus & SuccessInterrupts);
-    return EFI_SUCCESS;
-  }
-
-  return MsdcIntTrackError (Private, ExpectedInterrupts, IntStatus);
+  DEBUG ((DEBUG_ERROR, "MsdcDxe: controller %u command interrupt timed out\n", Private->Index));
+  return EFI_TIMEOUT;
 }
 
 VOID
@@ -432,7 +542,7 @@ MsdcFifoTxBytes (
   UINT32 FifoCs;
 
   MsdcRead (Private, MSDC_FIFOCS, &FifoCs);
-  *TxBytes = FifoCs & (0xff << 16);
+  *TxBytes = (FifoCs >> 16) & 0xff;
 }
 
 VOID
@@ -479,7 +589,7 @@ MsdcFifoWrite (
   }
 
   while (RemainSize >= 4) {
-    MmioWrite32 (Private->MsdcMmioReg + MSDC_TXDATA, *ByteBuffer);
+    MmioWrite32 (Private->MsdcMmioReg + MSDC_TXDATA, *(UINT32 *)ByteBuffer);
     ByteBuffer += 4;
     RemainSize -= 4;
   }
@@ -495,45 +605,57 @@ EFI_STATUS
 MsdcPioRead (
   MSDC_PRIVATE_DATA* Private,
   VOID  *Buffer,
-  UINT32 BufferLength)
+  UINT32 BufferLength,
+  UINT64 PacketTimeout)
 {
-  UINT32 IntStatus, ChunkSize, RemainSize, RxBytes;
+  BOOLEAN TransferComplete;
+  UINT32 IntStatus, ObservedInterrupts, ChunkSize, RemainSize, RxBytes;
   UINT8 *ByteBuffer = (UINT8 *)Buffer;
+  UINTN PollCount;
 
   RemainSize = BufferLength;
+  PollCount = MsdcPollCount (PacketTimeout, MSDC_DATA_TIMEOUT_US);
+  TransferComplete = FALSE;
 
   MsdcClrBits (Private, MSDC_INTEN, MSDC_INT_DATSTS);
 
-  while (TRUE) {
+  for (UINTN Poll = 0; Poll < PollCount; Poll++) {
     MsdcRead (Private, MSDC_INT, &IntStatus);
+    ObservedInterrupts = IntStatus & MSDC_INT_DATSTS;
 
-    if (IntStatus & (MSDC_INT_DATTMO | MSDC_INT_DATCRCERR | MSDC_INT_ACMDTMO | MSDC_INT_ACMDCRCERR)) {
-      return MsdcIntTrackError (Private, MSDC_INT_DATSTS, IntStatus);
-    }
-
-    ChunkSize = RemainSize > MSDC_FIFO_SIZE ? MSDC_FIFO_SIZE : RemainSize;
+    // Drain every byte already presented by the controller before deciding
+    // that XFER_COMPL ended the transfer.  The completion bit may become
+    // visible in the same poll as the final FIFO data.
     MsdcFifoRxBytes (Private, &RxBytes);
-
-    if (RemainSize == 0 && RxBytes) {
-      ASSERT (FALSE);
-    }
-
-    if (RxBytes >= ChunkSize) {
+    ChunkSize = RxBytes < RemainSize ? RxBytes : RemainSize;
+    if (ChunkSize != 0) {
       MsdcFifoRead (Private, ByteBuffer, ChunkSize);
       ByteBuffer += ChunkSize;
       RemainSize -= ChunkSize;
     }
 
-    if (IntStatus & MSDC_INT_XFER_COMPL) {
-      MsdcWrite (Private, MSDC_INT, IntStatus & MSDC_INT_XFER_COMPL);
+    if (ObservedInterrupts != 0) {
+      MsdcWrite (Private, MSDC_INT, ObservedInterrupts);
+    }
 
-      if (RemainSize) {
-        DEBUG ((DEBUG_ERROR, "MsdcDxe: Data not fully read!\n"));
-        return EFI_ABORTED;
-      }
+    if ((ObservedInterrupts & (MSDC_INT_DATERR | MSDC_INT_ACMDERR)) != 0) {
+      return MsdcIntTrackError (ObservedInterrupts);
+    }
 
+    if ((ObservedInterrupts & MSDC_INT_XFER_COMPL) != 0) {
+      TransferComplete = TRUE;
+    }
+
+    if (TransferComplete && (RemainSize == 0)) {
       break;
     }
+
+    MicroSecondDelay (MSDC_POLL_DELAY_US);
+  }
+
+  if (!TransferComplete || (RemainSize != 0)) {
+    DEBUG ((DEBUG_ERROR, "MsdcDxe: controller %u PIO read timed out\n", Private->Index));
+    return EFI_TIMEOUT;
   }
 
   return EFI_SUCCESS;
@@ -543,30 +665,39 @@ EFI_STATUS
 MsdcPioWrite (
   MSDC_PRIVATE_DATA* Private,
   VOID  *Buffer,
-  UINT32 BufferLength)
+  UINT32 BufferLength,
+  UINT64 PacketTimeout)
 {
-  UINT32 IntStatus, ChunkSize, RemainSize, TxBytes;
+  BOOLEAN TransferComplete;
+  UINT32 IntStatus, ObservedInterrupts, ChunkSize, RemainSize, TxBytes;
   UINT8 *ByteBuffer = (UINT8 *)Buffer;
+  UINTN PollCount;
 
   RemainSize = BufferLength;
+  PollCount = MsdcPollCount (PacketTimeout, MSDC_DATA_TIMEOUT_US);
+  TransferComplete = FALSE;
 
   MsdcClrBits (Private, MSDC_INTEN, MSDC_INT_DATSTS);
 
-  while (TRUE) {
+  for (UINTN Poll = 0; Poll < PollCount; Poll++) {
     MsdcRead (Private, MSDC_INT, &IntStatus);
+    ObservedInterrupts = IntStatus & MSDC_INT_DATSTS;
 
-    if (IntStatus & (MSDC_INT_DATTMO | MSDC_INT_DATCRCERR)) {
-      return MsdcIntTrackError (Private, MSDC_INT_DATSTS, IntStatus);
+    if (ObservedInterrupts != 0) {
+      MsdcWrite (Private, MSDC_INT, ObservedInterrupts);
     }
 
-    if (IntStatus & MSDC_INT_XFER_COMPL) {
-      MsdcWrite (Private, MSDC_INT, IntStatus & MSDC_INT_XFER_COMPL);
+    if ((ObservedInterrupts & (MSDC_INT_DATERR | MSDC_INT_ACMDERR)) != 0) {
+      return MsdcIntTrackError (ObservedInterrupts);
+    }
 
+    if ((ObservedInterrupts & MSDC_INT_XFER_COMPL) != 0) {
       if (RemainSize) {
         DEBUG ((DEBUG_ERROR, "MsdcDxe: Data not fully wrote!\n"));
         return EFI_ABORTED;
       }
 
+      TransferComplete = TRUE;
       break;
     }
 
@@ -578,6 +709,13 @@ MsdcPioWrite (
       ByteBuffer += ChunkSize;
       RemainSize -= ChunkSize;
     }
+
+    MicroSecondDelay (MSDC_POLL_DELAY_US);
+  }
+
+  if (!TransferComplete) {
+    DEBUG ((DEBUG_ERROR, "MsdcDxe: controller %u PIO write timed out\n", Private->Index));
+    return EFI_TIMEOUT;
   }
 
   return EFI_SUCCESS;
@@ -588,15 +726,19 @@ MsdcSendCmd (
   MSDC_PRIVATE_DATA* Private,
   EFI_SD_MMC_PASS_THRU_COMMAND_PACKET *Packet)
 {
-  BOOLEAN IsBusy, IsDataTransfer, IsRead;
+  BOOLEAN IsDataTransfer, IsRead, WaitDataBusy;
   EFI_STATUS Status;
-  UINT32 RawCmd, RspType, BlkLen;
+  UINT32 RawCmd, RspType, BlkLen, BlkSize, TransferLength;
+  UINT32 RxBytes, TxBytes;
   EFI_SD_MMC_COMMAND_BLOCK *CommandBlk = Packet->SdMmcCmdBlk;
   EFI_SD_MMC_STATUS_BLOCK  *SdMmcStatusBlk = Packet->SdMmcStatusBlk;
 
   RawCmd = CommandBlk->CommandIndex;
   IsDataTransfer = FALSE;
   IsRead = TRUE;
+  BlkLen = 0;
+  BlkSize = 0;
+  TransferLength = 0;
 
   if (CommandBlk->CommandType != SdMmcCommandTypeBc) {
     switch (CommandBlk->ResponseType) {
@@ -625,53 +767,31 @@ MsdcSendCmd (
     RawCmd |= RspType << SDC_CMD_RSP_TYPE_SHIFT;
   }
 
-  if (CommandBlk->CommandIndex == SD_READ_SINGLE_BLOCK ||
-      (CommandBlk->CommandIndex == EMMC_SEND_EXT_CSD && CommandBlk->CommandType == SdMmcCommandTypeAdtc)) {
-    // single block transaction
-    RawCmd |= SDC_CMD_SINGLE_BLK;
-    IsDataTransfer = TRUE;
-
-    BlkLen = 1;
+  if ((Packet->InTransferLength != 0) && (Packet->OutTransferLength != 0)) {
+    return EFI_INVALID_PARAMETER;
   }
 
-  if (CommandBlk->CommandIndex == SD_READ_MULTIPLE_BLOCK) {
-    // multiple block transaction
-    RawCmd |= SDC_CMD_MULTIPLE_BLK;
+  if (Packet->InTransferLength != 0) {
     IsDataTransfer = TRUE;
-    // Enable auto sending of CMD12 for SDCard
-    if (Private->SdInfo.CardType == SdCard) {
-      RawCmd |= SDC_CMD_AUTO12;
-    }
-
-    BlkLen = Packet->InTransferLength / BLOCK_SIZE;
-  }
-
-  if (CommandBlk->CommandIndex == SD_WRITE_SINGLE_BLOCK) {
-    // write mode
-    RawCmd |= SDC_CMD_RW;
-    // single block transaction
-    RawCmd |= SDC_CMD_SINGLE_BLK;
-
+    IsRead = TRUE;
+    TransferLength = Packet->InTransferLength;
+  } else if (Packet->OutTransferLength != 0) {
     IsDataTransfer = TRUE;
     IsRead = FALSE;
-
-    BlkLen = 1;
+    TransferLength = Packet->OutTransferLength;
   }
 
-  if (CommandBlk->CommandIndex == SD_WRITE_MULTIPLE_BLOCK) {
-    // write mode
-    RawCmd |= SDC_CMD_RW;
-    // multiple block transaction
-    RawCmd |= SDC_CMD_MULTIPLE_BLK;
-    // Enable auto sending of CMD12 for SDCard
-    if (Private->SdInfo.CardType == SdCard) {
-      RawCmd |= SDC_CMD_AUTO12;
-    }
+  if (IsDataTransfer !=
+      (CommandBlk->CommandType == SdMmcCommandTypeAdtc))
+  {
+    return EFI_INVALID_PARAMETER;
+  }
 
-    IsDataTransfer = TRUE;
-    IsRead = FALSE;
-
-    BlkLen = Packet->OutTransferLength / BLOCK_SIZE;
+  if (((CommandBlk->CommandIndex == SD_READ_SINGLE_BLOCK) ||
+       (CommandBlk->CommandIndex == SD_WRITE_SINGLE_BLOCK)) &&
+      (TransferLength != BLOCK_SIZE))
+  {
+    return EFI_BAD_BUFFER_SIZE;
   }
 
   if (CommandBlk->CommandIndex == SD_STOP_TRANSMISSION) {
@@ -680,23 +800,78 @@ MsdcSendCmd (
   }
 
   if (IsDataTransfer) {
-    RawCmd |= BLOCK_SIZE << SDC_CMD_BLK_SIZE_SHIFT;
+    if ((CommandBlk->CommandIndex == SD_READ_MULTIPLE_BLOCK) ||
+        (CommandBlk->CommandIndex == SD_WRITE_MULTIPLE_BLOCK))
+    {
+      if ((TransferLength % BLOCK_SIZE) != 0) {
+        return EFI_BAD_BUFFER_SIZE;
+      }
+
+      BlkSize = BLOCK_SIZE;
+      BlkLen = TransferLength / BLOCK_SIZE;
+      RawCmd |= SDC_CMD_MULTIPLE_BLK;
+      if (Private->SdInfo.CardType == SdCard) {
+        RawCmd |= SDC_CMD_AUTO12;
+      }
+    } else {
+      // ADTC commands such as SD CMD6/CMD51 use 64/8-byte data blocks,
+      // while ordinary single-block I/O and eMMC EXT_CSD use 512 bytes.
+      BlkSize = TransferLength;
+      BlkLen = 1;
+      RawCmd |= SDC_CMD_SINGLE_BLK;
+    }
+
+    if ((BlkSize == 0) || (BlkSize > 0xFFF)) {
+      return EFI_BAD_BUFFER_SIZE;
+    }
+
+    if (!IsRead) {
+      RawCmd |= SDC_CMD_RW;
+    }
+
+    RawCmd |= BlkSize << SDC_CMD_BLK_SIZE_SHIFT;
     MsdcWrite (Private, SDC_BLK_NUM, BlkLen);
   }
 
-  do {
-    MsdcCheckBusy (Private, &IsBusy);
-    MicroSecondDelay (100);
-  } while (IsBusy);
+  WaitDataBusy = IsDataTransfer ||
+                 (CommandBlk->ResponseType == SdMmcResponseTypeR1b) ||
+                 (CommandBlk->ResponseType == SdMmcResponseTypeR5b);
+  Status = MsdcWaitReady (Private, WaitDataBusy, Packet->Timeout);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
 
   // Disable interrupts because we use polling way
-  MsdcClrBits (Private, MSDC_INTEN, MSDC_INT_CMDSTS);
+  MsdcClrBits (Private, MSDC_INTEN, MSDC_INT_CMDSTS | MSDC_INT_DATSTS);
+
+  // A non-empty FIFO means the preceding transaction did not retire cleanly.
+  // Recover before issuing a new command, matching the upstream Linux host
+  // driver's reset/FIFO-clear behavior.
+  MsdcFifoRxBytes (Private, &RxBytes);
+  MsdcFifoTxBytes (Private, &TxBytes);
+  if ((RxBytes != 0) || (TxBytes != 0)) {
+    Status = MsdcReset (Private);
+    if (EFI_ERROR (Status)) {
+      return Status;
+    }
+
+    Status = MsdcClearFifo (Private);
+    if (EFI_ERROR (Status)) {
+      return Status;
+    }
+  }
+
+  // MSDC_INT is W1C.  Remove every stale status immediately before SDC_CMD.
+  MsdcClearInterrupts (Private);
 
   MsdcWrite (Private, SDC_ARG, CommandBlk->CommandArgument);
   MsdcWrite (Private, SDC_CMD, RawCmd);
 
-  Status = MsdcPollInterrupts (Private, MSDC_INT_CMDSTS, MSDC_INT_CMDRDY);
+  Status = MsdcPollInterrupts (Private, MSDC_INT_CMDSTS, MSDC_INT_CMDRDY, Packet->Timeout);
   if (EFI_ERROR(Status)) {
+    MsdcReset (Private);
+    MsdcClearFifo (Private);
+    MsdcClearInterrupts (Private);
     return Status;
   }
 
@@ -716,13 +891,19 @@ MsdcSendCmd (
 
   if (IsDataTransfer) {
     if (IsRead) {
-      Status = MsdcPioRead (Private, Packet->InDataBuffer, Packet->InTransferLength);
+      Status = MsdcPioRead (Private, Packet->InDataBuffer, Packet->InTransferLength, Packet->Timeout);
       if (EFI_ERROR(Status)) {
+        MsdcReset (Private);
+        MsdcClearFifo (Private);
+        MsdcClearInterrupts (Private);
         return Status;
       }
     } else {
-      Status = MsdcPioWrite (Private, Packet->OutDataBuffer, Packet->OutTransferLength);
+      Status = MsdcPioWrite (Private, Packet->OutDataBuffer, Packet->OutTransferLength, Packet->Timeout);
       if (EFI_ERROR(Status)) {
+        MsdcReset (Private);
+        MsdcClearFifo (Private);
+        MsdcClearInterrupts (Private);
         return Status;
       }
     }
@@ -731,20 +912,35 @@ MsdcSendCmd (
   return Status;
 }
 
-VOID MsdcInit (
+EFI_STATUS MsdcInit (
   MSDC_PRIVATE_DATA *Private)
 {
-  InitGpio (Private->Index);
-  ClockControl (Private->Index, TRUE);
+  EFI_STATUS Status;
+
+  Status = InitGpio (Private->Index);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = ClockControl (Private->Index, TRUE);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
 
   // Configure to SD/MMC mode, Clock free running, PIO mode
   MsdcSetBits (Private, MSDC_CFG, MSDC_CFG_MODE | MSDC_CFG_CCKPD | MSDC_CFG_PIO);
 
   // SW Reset
-  MsdcReset (Private);
+  Status = MsdcReset (Private);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
 
   // Clear FIFO
-  MsdcClearFifo (Private);
+  Status = MsdcClearFifo (Private);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
 
   // Mask all interrupts
   MsdcClearInterrupts (Private);
@@ -819,6 +1015,8 @@ VOID MsdcInit (
 
   // Set default bus width
   MsdcSetBusWidth (Private, 1);
+
+  return EFI_SUCCESS;
 }
 
 EFI_STATUS
@@ -1232,9 +1430,7 @@ CardSetBusMode (
     return EFI_DEVICE_ERROR;
   }
 
-  MsdcSetMclk(Private, 50 * 1000 * 1000);
-
-  return Status;
+  return MsdcSetMclk (Private, 50 * 1000 * 1000);
 }
 
 EFI_STATUS
@@ -1244,12 +1440,21 @@ EmmcIdentification (
   EFI_STATUS Status;
   EFI_SD_MMC_PASS_THRU_PROTOCOL *PassThru;
   UINT32 Ocr;
+  UINTN Retry;
 
   PassThru = &Private->PassThru;
 
-  PowerControl (Private->Index, TRUE);
+  Status = PowerControl (Private->Index, TRUE);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "MsdcDxe: failed to power eMMC host %u: %r\n", Private->Index, Status));
+    return Status;
+  }
+
   MicroSecondDelay (20000);
-  MsdcSetMclk (Private, 400000);
+  Status = MsdcSetMclk (Private, 400000);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
 
   Status = CardReset (PassThru);
   if (EFI_ERROR (Status)) {
@@ -1259,15 +1464,24 @@ EmmcIdentification (
 
   Ocr = 0;
 
-  do {
+  for (Retry = 0; Retry < MSDC_OCR_RETRY_COUNT_EMMC; Retry++) {
     Status = EMMCSendOpCond (PassThru, Ocr, TRUE, &Ocr);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_ERROR, "MsdcDxe: EMMCSendOpCond failed with status %r\n", Status));
       return Status;
     }
 
+    if ((Ocr & BIT31) != 0) {
+      break;
+    }
+
     MicroSecondDelay (100000);
-  } while ((Ocr & BIT31) == 0);
+  }
+
+  if ((Ocr & BIT31) == 0) {
+    DEBUG ((DEBUG_ERROR, "MsdcDxe: eMMC OCR-ready timed out on host %u\n", Private->Index));
+    return EFI_TIMEOUT;
+  }
 
   Status = CardAllSendCid (PassThru);
   if (EFI_ERROR (Status)) {
@@ -1300,12 +1514,21 @@ SdCardIdentification (
   BOOLEAN S18r;
   BOOLEAN Xpc;
   BOOLEAN Hcs;
+  UINTN Retry;
 
   PassThru = &Private->PassThru;
 
-  PowerControl (Private->Index, TRUE);
+  Status = PowerControl (Private->Index, TRUE);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "MsdcDxe: failed to power SD host %u: %r\n", Private->Index, Status));
+    return Status;
+  }
+
   MicroSecondDelay (20000);
-  MsdcSetMclk (Private, 400000);
+  Status = MsdcSetMclk (Private, 400000);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
 
   Status = CardReset (PassThru);
   if (EFI_ERROR (Status)) {
@@ -1331,14 +1554,23 @@ SdCardIdentification (
   Xpc = TRUE;
   Hcs = TRUE;
 
-  do {
+  for (Retry = 0; Retry < MSDC_OCR_RETRY_COUNT_SD; Retry++) {
     Status = SdCardSendOpCond (PassThru, 0, Ocr, S18r, Xpc, Hcs, &Ocr);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_ERROR, "MsdcDxe: SdCardSendOpCond failed with status %r\n", Status));
       return Status;
     }
-    MicroSecondDelay(10000);
-  } while ((Ocr & BIT31) == 0);
+    if ((Ocr & BIT31) != 0) {
+      break;
+    }
+
+    MicroSecondDelay (10000);
+  }
+
+  if ((Ocr & BIT31) == 0) {
+    DEBUG ((DEBUG_ERROR, "MsdcDxe: SD OCR-ready timed out on host %u\n", Private->Index));
+    return EFI_TIMEOUT;
+  }
 
   Status = CardAllSendCid (PassThru);
   if (EFI_ERROR (Status)) {
@@ -1360,12 +1592,6 @@ SdCardIdentification (
   return Status;
 }
 
-CARD_DETECT_ROUTINE CardDetectRoutineTable[] = {
-  EmmcIdentification,
-  SdCardIdentification,
-  NULL
-};
-
 EFI_STATUS
 InitMsdc (
   IN EFI_HANDLE ImageHandle,
@@ -1374,11 +1600,15 @@ InitMsdc (
   EFI_STATUS Status;
   MSDC_PRIVATE_DATA* Private;
   MSDC_DEVICE_PATH* DevicePath;
-  CARD_DETECT_ROUTINE *Routine;
   EFI_MEMORY_REGION_DESCRIPTOR Region;
   CHAR8 MsdcName[11];
 
+  Status = EFI_SUCCESS;
   for (UINTN i = 0; i < gPlatformInfo.NumberOfHosts; i++) {
+    if ((FixedPcdGet32 (PcdMsdcHostMask) & (1U << i)) == 0) {
+      continue;
+    }
+
     Private = AllocateCopyPool (sizeof(MSDC_PRIVATE_DATA), &gMSDCPrivateDataTemplate);
     if (Private == NULL) {
       return EFI_OUT_OF_RESOURCES;
@@ -1386,6 +1616,7 @@ InitMsdc (
 
     DevicePath = AllocateCopyPool (sizeof(MSDC_DEVICE_PATH), &gMSDCDevicePathTemplate);
     if (DevicePath == NULL) {
+      FreePool (Private);
       return EFI_OUT_OF_RESOURCES;
     }
     DevicePath->Mmc.Guid.Data4[7] = i;
@@ -1398,37 +1629,44 @@ InitMsdc (
     Status = LocateMemoryRegionByName (MsdcName, &Region);
     if (EFI_ERROR (Status)) {
       DEBUG ((EFI_D_ERROR, "Failed to Locate %s Memory Region! Status = %r\n", MsdcName, Status));
+      FreePool (DevicePath);
+      FreePool (Private);
       continue;
     }
 
     Private->MsdcMmioReg = Region.Address;
 
-    ZeroMem(MsdcName, sizeof(MsdcName));
-    AsciiSPrint(MsdcName, sizeof(MsdcName), "MSDC Top-%u", i);
+    if (gPlatformInfo.UseTop) {
+      ZeroMem(MsdcName, sizeof(MsdcName));
+      AsciiSPrint(MsdcName, sizeof(MsdcName), "MSDC Top-%u", i);
 
-    Status = LocateMemoryRegionByName (MsdcName, &Region);
+      Status = LocateMemoryRegionByName (MsdcName, &Region);
+      if (EFI_ERROR (Status)) {
+        DEBUG ((EFI_D_ERROR, "Failed to Locate %s Memory Region! Status = %r\n", MsdcName, Status));
+        FreePool (DevicePath);
+        FreePool (Private);
+        continue;
+      }
+
+      Private->TopMmioReg = Region.Address;
+    }
+
+    Status = MsdcInit (Private);
     if (EFI_ERROR (Status)) {
-      DEBUG ((EFI_D_ERROR, "Failed to Locate %s Memory Region! Status = %r\n", MsdcName, Status));
+      DEBUG ((DEBUG_ERROR, "MsdcDxe: failed to initialize host %u: %r\n", i, Status));
+      FreePool (DevicePath);
+      FreePool (Private);
       continue;
     }
 
-    Private->TopMmioReg = Region.Address;
-
-    MsdcInit(Private);
-
-    for (UINT32 j = 0; j < sizeof(CardDetectRoutineTable) / sizeof(CARD_DETECT_ROUTINE); j++) {
-      Routine = &CardDetectRoutineTable[j];
-      if (*Routine != NULL) {
-        Status = (*Routine)(Private);
-        if (!EFI_ERROR(Status)) {
-          break;
-        }
-      }
-    }
+    // MTK host 0 is the non-removable eMMC when the platform advertises it;
+    // all other hosts are removable SD. Never probe both card types per host.
+    Status = ((i == 0) && FixedPcdGetBool (PcdStorageIsEMMC))
+             ? EmmcIdentification (Private)
+             : SdCardIdentification (Private);
 
     if (EFI_ERROR(Status)) {
-      DEBUG ((DEBUG_ERROR, "MsdcDxe: Failed to detect card! %r\n", Status));
-      Status = EFI_SUCCESS;
+      DEBUG ((DEBUG_ERROR, "MsdcDxe: no usable card on host %u: %r\n", i, Status));
       FreePool (Private);
       FreePool (DevicePath);
       continue;
@@ -1447,5 +1685,8 @@ InitMsdc (
     }
   }
 
-  return Status;
+  // A missing removable card or an unavailable host must not prevent BDS and
+  // the firmware Shell from running. Successfully installed controllers are
+  // represented by their pass-through handles.
+  return EFI_SUCCESS;
 }

@@ -25,6 +25,8 @@ ClearFrameBuffer ()
 {
   EFI_MEMORY_REGION_DESCRIPTOR FrameBufferRegion;
 
+  ZeroMem (&FrameBufferRegion, sizeof (FrameBufferRegion));
+
   // Locate "Display Reserved" Memory Region
   LocateMemoryRegionByName ("Display Reserved", &FrameBufferRegion);
   LocateMemoryRegionByName ("Display_Reserved", &FrameBufferRegion);

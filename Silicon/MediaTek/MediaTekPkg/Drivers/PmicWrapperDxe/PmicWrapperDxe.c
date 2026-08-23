@@ -13,6 +13,9 @@ typedef enum {
   WacsFsmWfVldClr = 6,
 } WACS_FSM_STATE;
 
+#define PWRAP_POLL_DELAY_US    10
+#define PWRAP_POLL_TIMEOUT_US  10000
+
 STATIC EFI_MEMORY_REGION_DESCRIPTOR mPmicWrapperRegion;
 
 STATIC
@@ -52,28 +55,46 @@ WacsGetFsm ()
 }
 
 STATIC
-VOID
+EFI_STATUS
 WacsWaitFor (
   IN WACS_FSM_STATE Fsm)
 {
-  // Wait until FSM reaches requested state
-  while (WacsGetFsm () != Fsm)
-  {
-    MicroSecondDelay (100);
+  UINTN Elapsed;
+
+  // PMIC wrapper transactions normally complete in a few microseconds.  Do
+  // not let a broken or unavailable wrapper stall the DXE dispatcher forever.
+  for (Elapsed = 0; Elapsed < PWRAP_POLL_TIMEOUT_US; Elapsed += PWRAP_POLL_DELAY_US) {
+    if (WacsGetFsm () == Fsm) {
+      return EFI_SUCCESS;
+    }
+
+    MicroSecondDelay (PWRAP_POLL_DELAY_US);
   }
+
+  return EFI_TIMEOUT;
 }
 
 STATIC
-VOID
+EFI_STATUS
 WacsCommand (
   IN UINT32  Address,
   IN UINT32  Data,
   IN BOOLEAN IsWrite)
 {
+  EFI_STATUS Status;
   UINT32 WacsCommand;
 
+  // A timed-out read may leave the wrapper waiting for VLDCLR.  Clear that
+  // stale result before accepting a new transaction.
+  if (WacsGetFsm () == WacsFsmWfVldClr) {
+    PmicWrapperWrite (PmicWrapperWacs2VldClr, 1);
+  }
+
   // Wait until FSM reaches idle state
-  WacsWaitFor (WacsFsmIdle);
+  Status = WacsWaitFor (WacsFsmIdle);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
 
   // Encode Address, data and write mode
   if (gPlatformInfo.ArbCapabilities) {
@@ -88,35 +109,60 @@ WacsCommand (
 
   // Write Command
   PmicWrapperWrite (PmicWrapperWacs2Cmd, WacsCommand);
+
+  return EFI_SUCCESS;
 }
 
 STATIC
-VOID
+EFI_STATUS
 PmicWrapperImplRead (
   IN  UINT16  Address,
   OUT UINT16 *Value)
 {
+  EFI_STATUS Status;
   UINT32 Result;
 
+  if (Value == NULL) {
+    return EFI_INVALID_PARAMETER;
+  }
+
   // Send read transaction and wait until result become valid
-  WacsCommand (Address, 0, FALSE);
-  WacsWaitFor (WacsFsmWfVldClr);
+  Status = WacsCommand (Address, 0, FALSE);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = WacsWaitFor (WacsFsmWfVldClr);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
 
   // Read data
   Result = PmicWrapperRead (gPlatformInfo.ArbCapabilities ? PmicWrapperSwinf2RData31 : PmicWrapperWacs2RData);
   PmicWrapperWrite (PmicWrapperWacs2VldClr, 1);
 
   *Value = (Result & 0xFFFF);
+
+  return WacsWaitFor (WacsFsmIdle);
 }
 
 STATIC
-VOID
+EFI_STATUS
 PmicWrapperImplWrite (
   IN  UINT16 Address,
-  OUT UINT16 Value)
+  IN  UINT16 Value)
 {
+  EFI_STATUS Status;
+
   // Send write transaction
-  WacsCommand (Address, Value, TRUE);
+  Status = WacsCommand (Address, Value, TRUE);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  // Ensure the write completed before reporting success to a read-modify-write
+  // caller or starting a subsequent transaction.
+  return WacsWaitFor (WacsFsmIdle);
 }
 
 STATIC MTK_PMIC_WRAPPER_PROTOCOL mPmicWrapper = {
@@ -143,9 +189,8 @@ InitPmicWrapper (
   // Read init state of PMIC Wrapper
   InitState = PmicWrapperRead (PmicWrapperInitDone2);
   if (InitState != 1) {
-    DEBUG ((EFI_D_ERROR, "PMIC Wrapper Not Initialized!\n", Status));
-    Status = EFI_NOT_READY;
-    ASSERT_EFI_ERROR (Status);
+    DEBUG ((EFI_D_ERROR, "PMIC Wrapper Not Initialized! INIT_DONE2 = 0x%x\n", InitState));
+    return EFI_NOT_READY;
   }
 
   // Register PMIC Wrapper Protocol

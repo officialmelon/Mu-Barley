@@ -10,14 +10,97 @@
 
 #include <Library/DeviceBootManagerLib.h>
 #include <Library/DevicePathLib.h>
+#include <Library/DxeServicesTableLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/UefiBootManagerLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 
+#include <Protocol/BlockIo.h>
 #include <Protocol/LoadedImage.h>
+#include <Protocol/SdMmcPassThru.h>
 
 extern EFI_GUID gUefiShellFileGuid;
+
+STATIC
+UINTN
+CountProtocolHandles (
+  IN EFI_GUID *Protocol
+  )
+{
+  EFI_HANDLE *Handles;
+  EFI_STATUS  Status;
+  UINTN       HandleCount;
+
+  Handles = NULL;
+  HandleCount = 0;
+  Status = gBS->LocateHandleBuffer (
+                  ByProtocol,
+                  Protocol,
+                  NULL,
+                  &HandleCount,
+                  &Handles
+                  );
+  if (EFI_ERROR (Status)) {
+    return 0;
+  }
+
+  FreePool (Handles);
+  return HandleCount;
+}
+
+STATIC
+EFI_STATUS
+ConnectEmmcPassThruControllers (
+  OUT UINTN *ControllerCount
+  )
+{
+  EFI_HANDLE *Handles;
+  EFI_STATUS  ConnectStatus;
+  EFI_STATUS  Status;
+  UINTN       HandleCount;
+  UINTN       Index;
+
+  if (ControllerCount == NULL) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  *ControllerCount = 0;
+
+  // BDS is in APRIORI, while the deliberately minimal storage stack is not.
+  // Dispatch the remaining FV drivers before looking for MSDC pass-through
+  // controller handles.  Do not recursively connect unrelated controllers.
+  do {
+    Status = gDS->Dispatch ();
+  } while (!EFI_ERROR (Status));
+
+  Handles     = NULL;
+  HandleCount = 0;
+  Status = gBS->LocateHandleBuffer (
+                  ByProtocol,
+                  &gEfiSdMmcPassThruProtocolGuid,
+                  NULL,
+                  &HandleCount,
+                  &Handles
+                  );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  *ControllerCount = HandleCount;
+  ConnectStatus    = EFI_NOT_FOUND;
+  for (Index = 0; Index < HandleCount; Index++) {
+    Status = gBS->ConnectController (Handles[Index], NULL, NULL, TRUE);
+    if (!EFI_ERROR (Status)) {
+      ConnectStatus = EFI_SUCCESS;
+    } else if (ConnectStatus == EFI_NOT_FOUND) {
+      ConnectStatus = Status;
+    }
+  }
+
+  FreePool (Handles);
+  return ConnectStatus;
+}
 
 STATIC
 EFI_STATUS
@@ -79,14 +162,29 @@ DeviceBootManagerAfterConsole (
   )
 {
   EFI_BOOT_MANAGER_LOAD_OPTION ShellOption = {0};
+  EFI_STATUS                   ConnectStatus;
+  UINTN                        ControllerCount;
 
   if (gST->ConOut != NULL) {
     gST->ConOut->SetAttribute (gST->ConOut, EFI_TEXT_ATTR (EFI_WHITE, EFI_BLACK));
     gST->ConOut->ClearScreen (gST->ConOut);
     gST->ConOut->OutputString (
                    gST->ConOut,
-                   L"Barley UEFI\r\nGOP and DXE OK\r\nLaunching UEFI Shell...\r\n"
+                   L"Barley UEFI\r\nGOP and DXE OK\r\nProbing LK-inherited eMMC host 0...\r\n"
                    );
+  }
+
+  ControllerCount = 0;
+  ConnectStatus = ConnectEmmcPassThruControllers (&ControllerCount);
+
+  if (gST->ConOut != NULL) {
+    Print (
+      L"eMMC raw proof: %u pass-through, %u Block I/O, connect %r\r\n"
+      L"Launching FV UEFI Shell...\r\n",
+      ControllerCount,
+      CountProtocolHandles (&gEfiBlockIoProtocolGuid),
+      ConnectStatus
+      );
   }
 
   if (!EFI_ERROR (BuildShellLoadOption (&ShellOption))) {

@@ -53,8 +53,18 @@
   # Storage
   #
   gMediaTekPkgTokenSpaceGuid.PcdStorageIsEMMC|TRUE
+  # First expose only LK's already-powered soldered eMMC.  The removable slot
+  # uses Lenovo's VMCH_EINT_LOW supply proxy and needs its own regulator path.
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcHostMask|0x1
+  # LK has already established the eMMC supply and pinmux.  Preserve that
+  # verified working state while the common controller driver takes over.
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcPreserveBootStateMask|0x1
 
 [LibraryClasses]
+!if $(TARGET) == DEBUG
+  # Lenovo LK uses three differently pitched scanout surfaces.
+  SerialPortLib|barleyPkg/Library/BarleyLkFrameBufferSerialPortLib/BarleyLkFrameBufferSerialPortLib.inf
+!endif
   FdtLib|MdePkg/Library/BaseFdtLib/BaseFdtLib.inf
   MemoryMapLib|barleyPkg/Library/MemoryMapLib/MemoryMapLib.inf
   PlatformSecLib|barleyPkg/Library/PlatformSecLib/PlatformSecLib.inf

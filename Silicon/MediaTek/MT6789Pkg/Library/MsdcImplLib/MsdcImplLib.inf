@@ -19,6 +19,7 @@
 [LibraryClasses]
   UefiBootServicesTableLib
   DebugLib
+  PcdLib
 
 [Protocols]
   gMediaTekGpioProtocolGuid
@@ -27,3 +28,4 @@
 
 [FixedPcd]
   gMediaTekPkgTokenSpaceGuid.PcdStorageIsEMMC
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcPreserveBootStateMask

@@ -27,12 +27,6 @@
 #include <BarleyLkDisplay.h>
 #include <Configuration/BootDevices.h>
 
-#define BARLEY_FB0_BASE             0x7BCE0000ULL
-#define BARLEY_FB1_BASE             0x7C5C8000ULL
-#define BARLEY_FB2_BASE             0x7CEB0000ULL
-#define BARLEY_FB_CARVEOUT_END      0x7DC00000ULL
-#define BARLEY_PITCH_PACKED         4800U
-#define BARLEY_PITCH_ALIGNED        4864U
 #define BARLEY_PRIMARY_TARGET       2U
 
 typedef struct {

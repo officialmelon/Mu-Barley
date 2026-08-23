@@ -23,7 +23,7 @@ STATIC EFI_MEMORY_REGION_DESCRIPTOR gBaseMemoryDescriptor[] = {
   // LK direct-link OVL backing store. Logs show three 0x008E8000-spaced surfaces.
   {"LK Framebuffer",     0x7BCE0000, 0x01F20000, AddMem, MEM_RES, SYS_MEM_CAP, Reserv, WRITE_THROUGH},
   // Distinct FDT display allocation retained from M2.8; not claimed as scanout.
-  {"Display Reserved",   0x7E605000, 0x017E8000, AddMem, MEM_RES, SYS_MEM_CAP, Reserv, WRITE_THROUGH},
+  {"LK Display Aux",     0x7E605000, 0x017E8000, AddMem, MEM_RES, SYS_MEM_CAP, Reserv, WRITE_THROUGH},
 
   // MT6768 register regions verified against Barley firmware/device-tree evidence.
   {"GIC Distributor",    0x0C000000, 0x00040000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
@@ -37,8 +37,9 @@ STATIC EFI_MEMORY_REGION_DESCRIPTOR gBaseMemoryDescriptor[] = {
   {"EMI",                0x10219000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
   {"MSDC-0",             0x11230000, 0x00010000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
   {"MSDC-1",             0x11240000, 0x00010000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
-  {"MSDC Top-0",         0x11C90000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
-  {"MSDC Top-1",         0x11CD0000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
+  // Live Barley FDT: msdc0_top@11cd0000 and msdc1_top@11c90000.
+  {"MSDC Top-0",         0x11CD0000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
+  {"MSDC Top-1",         0x11C90000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
   {"Display MMSYS",      0x14000000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
   {"Display OVL0",       0x1400B000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},
   {"Display OVL0 2L",    0x1400C000, 0x00001000, AddDev, MMAP_IO, UNCACHEABLE, MmIO,   NS_DEVICE},

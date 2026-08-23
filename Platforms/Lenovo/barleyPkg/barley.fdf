@@ -42,8 +42,9 @@ READ_LOCK_STATUS   = TRUE
 
   INF ShellPkg/Application/Shell/Shell.inf
 
-  # Deliberately omit storage, USB, PMIC/GPIO, ACPI, SMBIOS, and RAM manager
-  # until the core shell environment is proven independently of peripherals.
+  # ACPI, USB and platform peripherals remain deferred.  The standard
+  # MediaTek eMMC/SD stack is included through DXE.inc and falls through to
+  # the internal Shell when a host or card is unavailable.
 
 [FV.FVMAIN_COMPACT]
 FvAlignment        = 8

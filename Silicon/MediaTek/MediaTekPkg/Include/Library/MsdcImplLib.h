@@ -12,33 +12,33 @@ typedef struct {
   BOOLEAN EnhanceRx;
 } MSDC_PLATFORM_INFO;
 
-VOID
+EFI_STATUS
 GetSourceClockRate (
-  UINT32 Index,
-  UINTN *Hz
+  IN  UINT32 Index,
+  OUT UINTN *Hz
   );
 
-VOID
+EFI_STATUS
 SourceClockControl (
-  UINT32 Index,
-  BOOLEAN Enable
+  IN UINT32  Index,
+  IN BOOLEAN Enable
   );
 
-VOID
+EFI_STATUS
 ClockControl (
-  UINT32 Index,
-  BOOLEAN Enable
+  IN UINT32  Index,
+  IN BOOLEAN Enable
   );
 
-VOID
+EFI_STATUS
 PowerControl (
-  UINT32 Index,
-  BOOLEAN Enable
+  IN UINT32  Index,
+  IN BOOLEAN Enable
   );
 
-VOID
+EFI_STATUS
 InitGpio (
-  UINT32 Index
+  IN UINT32 Index
   );
 
 extern MSDC_PLATFORM_INFO gPlatformInfo;
