@@ -40,14 +40,24 @@ READ_LOCK_STATUS   = TRUE
   !include Include/APRIORI.inc
   !include Include/DXE.inc
 
+  # Publish the standard Silicium platform metadata consumed by Windows and
+  # other UEFI operating-system loaders.  Keep this identical to the MT6768
+  # lancelot path instead of introducing a Barley-specific handoff.
+  INF MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
+  INF SiliciumPkg/Drivers/SmBiosTableDxe/SmBiosTableDxe.inf
+
+  INF MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf
+  INF MdeModulePkg/Universal/Acpi/AcpiPlatformDxe/AcpiPlatformDxe.inf
+  !include Include/ACPI.inc
+
   # Standard Silicium boot policy, boot manager, setup, and recovery tools.
   # This is the same MediaTek include used by the working lancelot/stone ports.
   !include MediaTekPkg/Extra.fdf.inc
 
   INF ShellPkg/Application/Shell/Shell.inf
 
-  # ACPI, USB and other platform peripherals remain deferred.  The standard
-  # MediaTek eMMC/SD stack is included through DXE.inc and APRIORI.inc.
+  # USB and other platform peripherals remain deferred.  The standard MediaTek
+  # eMMC/SD stack is included through DXE.inc and APRIORI.inc.
 
 [FV.FVMAIN_COMPACT]
 FvAlignment        = 8
