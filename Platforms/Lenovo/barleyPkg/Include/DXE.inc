@@ -25,6 +25,8 @@
   INF MediaTekPkg/Drivers/ClockDxe/ClockDxe.inf
   INF MediaTekPkg/Drivers/PmicWrapperDxe/PmicWrapperDxe.inf
   INF MediaTekPkg/Drivers/MT6358PmicDxe/MT6358PmicDxe.inf
+  INF SiliciumPkg/Drivers/KeypadDeviceDxe/KeypadDeviceDxe.inf
+  INF SiliciumPkg/Drivers/KeypadDxe/KeypadDxe.inf
   INF MediaTekPkg/Drivers/MsdcDxe/MsdcDxe.inf
   INF MdeModulePkg/Bus/Sd/EmmcDxe/EmmcDxe.inf
 

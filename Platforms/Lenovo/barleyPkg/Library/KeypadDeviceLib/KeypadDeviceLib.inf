@@ -1,0 +1,24 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = BarleyKeypadDeviceLib
+  FILE_GUID                      = D5884F04-B922-4D11-8D3D-EA449C43EAC4
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = KeypadDeviceLib
+  CONSTRUCTOR                    = KeypadDeviceConstructor
+
+[Sources.common]
+  KeypadDeviceLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MediaTekPkg/MediaTekPkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+
+[LibraryClasses]
+  BaseMemoryLib
+  DebugLib
+  UefiBootServicesTableLib
+
+[Protocols]
+  gMediaTekPmicProtocolGuid

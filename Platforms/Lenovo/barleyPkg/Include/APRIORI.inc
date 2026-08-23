@@ -15,6 +15,12 @@ APRIORI DXE {
   INF MdeModulePkg/Universal/DevicePathDxe/DevicePathDxe.inf
   INF MdeModulePkg/Universal/CapsuleRuntimeDxe/CapsuleRuntimeDxe.inf
   INF MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
+  # Match the proven MT6768 input ordering: the PMIC provider must exist before
+  # the platform keypad library constructor is invoked.
+  INF MediaTekPkg/Drivers/PmicWrapperDxe/PmicWrapperDxe.inf
+  INF MediaTekPkg/Drivers/MT6358PmicDxe/MT6358PmicDxe.inf
+  INF SiliciumPkg/Drivers/KeypadDeviceDxe/KeypadDeviceDxe.inf
+  INF SiliciumPkg/Drivers/KeypadDxe/KeypadDxe.inf
   INF barleyPkg/Drivers/BarleyLkGopDxe/BarleyLkGopDxe.inf
   INF MdeModulePkg/Universal/Console/ConPlatformDxe/ConPlatformDxe.inf
   INF MdeModulePkg/Universal/Console/ConSplitterDxe/ConSplitterDxe.inf

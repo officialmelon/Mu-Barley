@@ -69,6 +69,7 @@
   MemoryMapLib|barleyPkg/Library/MemoryMapLib/MemoryMapLib.inf
   PlatformSecLib|barleyPkg/Library/PlatformSecLib/PlatformSecLib.inf
   DeviceBootManagerLib|barleyPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.inf
+  KeypadDeviceLib|barleyPkg/Library/KeypadDeviceLib/KeypadDeviceLib.inf
   ShellLib|ShellPkg/Library/UefiShellLib/UefiShellLib.inf
   ShellCommandLib|ShellPkg/Library/UefiShellCommandLib/UefiShellCommandLib.inf
   HandleParsingLib|ShellPkg/Library/UefiHandleParsingLib/UefiHandleParsingLib.inf
@@ -76,6 +77,8 @@
 
 [Components]
   barleyPkg/Drivers/BarleyLkGopDxe/BarleyLkGopDxe.inf
+  SiliciumPkg/Drivers/KeypadDeviceDxe/KeypadDeviceDxe.inf
+  SiliciumPkg/Drivers/KeypadDxe/KeypadDxe.inf
 
   ShellPkg/Application/Shell/Shell.inf {
     <PcdsFixedAtBuild>
