@@ -6,16 +6,6 @@ APRIORI DXE {
   INF ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.inf
   INF EmbeddedPkg/MetronomeDxe/MetronomeDxe.inf
   INF ArmPkg/Drivers/TimerDxe/TimerDxe.inf
-
-  # MsdcImplLib locates and immediately uses these provider protocols.  Their
-  # order is therefore part of the MT6768 storage contract, not cosmetic.
-  INF MediaTekPkg/Drivers/GpioDxe/GpioDxe.inf
-  INF MediaTekPkg/Drivers/ClockDxe/ClockDxe.inf
-  INF MediaTekPkg/Drivers/PmicWrapperDxe/PmicWrapperDxe.inf
-  INF MediaTekPkg/Drivers/MT6358PmicDxe/MT6358PmicDxe.inf
-  INF MediaTekPkg/Drivers/MsdcDxe/MsdcDxe.inf
-  INF MdeModulePkg/Bus/Sd/EmmcDxe/EmmcDxe.inf
-
   INF MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
   INF MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystemRuntimeDxe.inf
   INF MdeModulePkg/Universal/WatchdogTimerDxe/WatchdogTimer.inf

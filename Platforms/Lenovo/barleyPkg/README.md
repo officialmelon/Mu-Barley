@@ -39,8 +39,6 @@ Do not flash build artifacts automatically.
 | PMIC wrapper `0x1000D000` / MT6358 | Barley DT/runtime and MT6768 package | VERIFIED MATCH |
 | MSDC0 `0x11230000`, size `0x10000`, GSI 132 | Barley DT and MT6768 package | VERIFIED MATCH |
 | MSDC1 `0x11240000`, size `0x10000`, GSI 133 | Barley DT and MT6768 package | VERIFIED MATCH |
-| MSDC0 Top `0x11CD0000`, size `0x1000` | Live LK FDT `/mmc@11230000/reg` and `/proc/iomem` | VERIFIED |
-| MSDC1 Top `0x11C90000`, size `0x1000` | Live LK FDT `/mmc@11240000/reg` and `/proc/iomem` | VERIFIED |
 | eMMC GPIO 122-133 mapping | Barley DT and MT6768 `MsdcImplLib` | VERIFIED MATCH |
 | microSD GPIO 161-164, 170-171 mapping | Barley DT and MT6768 `MsdcImplLib` | VERIFIED MATCH |
 | logo decompression output `0x7A3F8000`, size `0x008CA000` | Physical LK expdb (`out`, `have`) | VERIFIED |
@@ -101,16 +99,6 @@ volume-down on `mtk-pmic-keys`, while volume-up is on `mtk-kpd`. Lancelot's
 GPIO-93 volume-down assignment does not apply, and no GPIO/keyscan value is
 invented here.
 
-The first storage milestone uses the existing MT6768 GPIO, clock, PMIC-wrapper,
-MT6358, MSDC, and EMMC drivers to expose only eMMC hardware Block I/O. Lenovo's
-live FDT pairs host 0 with `msdc0_top@11cd0000` and host 1 with
-`msdc1_top@11c90000`; preserving those associations is required because
-`MsdcDxe` looks the controller and Top descriptors up independently by host
-index. `EmmcDxe` is connected only to handles exposing the MediaTek SD/MMC
-pass-through protocol before the internal Shell starts. Partition, FAT, and SD
-drivers remain excluded until physical Block-I/O enumeration is proven. No
-storage data is formatted or repartitioned by this milestone.
-
 Initial ACPI reuses the MT6768 single-core MADT, generic timer, GIC, minimal
 DSDT, FADT, and common SSDT. Multicore PSCI/MADT work is deferred until a stable
 single-core boot exists.
@@ -121,8 +109,8 @@ The port reuses `GpioImplLib`, `ClockImplLib`, `PmicWrapperImplLib`, and
 `MsdcImplLib`. Barley overrides only `PlatformSecLib`: Lenovo LK has already
 entered at EL1, so its assembly initializer is a no-op and its C initializer
 only disables TOPRGU. This avoids the Lancelot-specific OVL mutation in the
-shared MT6768 library. The core shell and passive GOP are physically proven;
-additional peripherals are now introduced one dependency chain at a time.
+shared MT6768 library. Peripheral DXE drivers remain excluded from the minimal
+shell image until core boot is proven.
 
 ## M2 execution gate
 

@@ -16,7 +16,6 @@
 #include <Library/UefiLib.h>
 
 #include <Protocol/LoadedImage.h>
-#include <Protocol/SdMmcPassThru.h>
 
 extern EFI_GUID gUefiShellFileGuid;
 
@@ -63,39 +62,6 @@ BuildShellLoadOption (
   return Status;
 }
 
-STATIC
-VOID
-ConnectEmmcControllers (
-  VOID
-  )
-{
-  EFI_HANDLE *Handles;
-  UINTN       HandleCount;
-  UINTN       Index;
-  EFI_STATUS  Status;
-
-  Handles     = NULL;
-  HandleCount = 0;
-  Status = gBS->LocateHandleBuffer (
-                  ByProtocol,
-                  &gEfiSdMmcPassThruProtocolGuid,
-                  NULL,
-                  &HandleCount,
-                  &Handles
-                  );
-  if (EFI_ERROR (Status)) {
-    return;
-  }
-
-  // EmmcDxe is a driver-binding driver.  Connect only the controllers created
-  // by MsdcDxe so this milestone cannot start unrelated platform hardware.
-  for (Index = 0; Index < HandleCount; Index++) {
-    gBS->ConnectController (Handles[Index], NULL, NULL, TRUE);
-  }
-
-  FreePool (Handles);
-}
-
 EFI_HANDLE
 EFIAPI
 DeviceBootManagerBeforeConsole (
@@ -113,8 +79,6 @@ DeviceBootManagerAfterConsole (
   )
 {
   EFI_BOOT_MANAGER_LOAD_OPTION ShellOption = {0};
-
-  ConnectEmmcControllers ();
 
   if (gST->ConOut != NULL) {
     gST->ConOut->SetAttribute (gST->ConOut, EFI_TEXT_ATTR (EFI_WHITE, EFI_BLACK));

@@ -42,9 +42,8 @@ READ_LOCK_STATUS   = TRUE
 
   INF ShellPkg/Application/Shell/Shell.inf
 
-  # M2.23 physically proved the core shell.  M2.24 adds only the MT6768 eMMC
-  # provider and Block-I/O chain; partition/FAT, USB, ACPI, SMBIOS, and the RAM
-  # manager remain deliberately omitted until their preceding layer is proven.
+  # Deliberately omit storage, USB, PMIC/GPIO, ACPI, SMBIOS, and RAM manager
+  # until the core shell environment is proven independently of peripherals.
 
 [FV.FVMAIN_COMPACT]
 FvAlignment        = 8
