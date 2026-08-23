@@ -54,7 +54,7 @@ CountProtocolHandles (
 
 STATIC
 EFI_STATUS
-ConnectEmmcPassThruControllers (
+ConnectMsdcPassThruControllers (
   OUT UINTN *ControllerCount
   )
 {
@@ -173,16 +173,16 @@ DeviceBootManagerAfterConsole (
     gST->ConOut->ClearScreen (gST->ConOut);
     gST->ConOut->OutputString (
                    gST->ConOut,
-                   L"Barley UEFI\r\nGOP and DXE OK\r\nProbing LK-inherited eMMC host 0...\r\n"
+                   L"Barley UEFI\r\nGOP and DXE OK\r\nProbing MediaTek eMMC and SD hosts...\r\n"
                    );
   }
 
   ControllerCount = 0;
-  ConnectStatus = ConnectEmmcPassThruControllers (&ControllerCount);
+  ConnectStatus = ConnectMsdcPassThruControllers (&ControllerCount);
 
   if (gST->ConOut != NULL) {
     Print (
-      L"eMMC proof: %u pass-through, %u Block I/O, %u Disk I/O, "
+      L"Storage proof: %u pass-through, %u Block I/O, %u Disk I/O, "
       L"%u partitions, %u file systems, connect %r\r\n"
       L"Launching FV UEFI Shell...\r\n",
       ControllerCount,

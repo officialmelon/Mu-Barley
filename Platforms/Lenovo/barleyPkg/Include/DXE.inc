@@ -29,6 +29,7 @@
   INF SiliciumPkg/Drivers/KeypadDxe/KeypadDxe.inf
   INF MediaTekPkg/Drivers/MsdcDxe/MsdcDxe.inf
   INF MdeModulePkg/Bus/Sd/EmmcDxe/EmmcDxe.inf
+  INF MdeModulePkg/Bus/Sd/SdDxe/SdDxe.inf
 
   # Standard block-device composition.  These remain outside APRIORI and are
   # connected only below the verified host-0 eMMC pass-through controller.

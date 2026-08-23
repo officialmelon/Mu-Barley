@@ -59,12 +59,21 @@
   # Storage
   #
   gMediaTekPkgTokenSpaceGuid.PcdStorageIsEMMC|TRUE
-  # First expose only LK's already-powered soldered eMMC.  The removable slot
-  # uses Lenovo's VMCH_EINT_LOW supply proxy and needs its own regulator path.
-  gMediaTekPkgTokenSpaceGuid.PcdMsdcHostMask|0x1
+  # Host 0 is soldered eMMC; host 1 is the removable microSD slot described by
+  # both independently captured Lenovo LK-patched FDTs.
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcHostMask|0x3
   # LK has already established the eMMC supply and pinmux.  Preserve that
   # verified working state while the common controller driver takes over.
   gMediaTekPkgTokenSpaceGuid.PcdMsdcPreserveBootStateMask|0x1
+  # Lenovo wires the slot's VMMC request through MT6358 VMCH_EINT_LOW and its
+  # VQMMC rail through VMC.  GPIO18 is an active-high card-detect input.
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableVmmcRegulatorName|"ldo_vmch_eint_low"
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableVqmmcRegulatorName|"ldo_vmc"
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableCardDetectPin|18
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableCardDetectActiveHigh|TRUE
+  # Start at a conservative SD default-speed clock.  High-speed/UHS tuning is
+  # deliberately deferred until basic removable Block I/O is proven.
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableMaxClockHz|25000000
 
 [LibraryClasses]
 !if $(TARGET) == DEBUG
