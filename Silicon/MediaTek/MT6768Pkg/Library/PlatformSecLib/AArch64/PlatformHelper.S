@@ -6,15 +6,16 @@
 #include <AsmMacroLib.h>
 
 ASM_FUNC (PlatformAssemblyInitialize)
-  EL1_OR_EL2 (x0)
+  // Preserve x0: Lenovo LK passes the live FDT pointer in this register.
+  EL1_OR_EL2 (x9)
 1:ret
 // Switch to EL1
-2:mov x0, #(1 << 31)
-  msr hcr_el2, x0
+2:mov x9, #(1 << 31)
+  msr hcr_el2, x9
 
   msr elr_el2, x30
 
-  mov x0, #0x3C5 // EL1h
-  msr spsr_el2, x0
+  mov x9, #0x3C5 // EL1h
+  msr spsr_el2, x9
   isb
   eret
