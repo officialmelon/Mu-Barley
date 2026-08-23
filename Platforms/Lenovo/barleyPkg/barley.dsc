@@ -22,6 +22,12 @@
 !include MT6768Pkg/MT6768Pkg.dsc.inc
 
 [PcdsFixedAtBuild]
+  # Barley does not include the HII FormBrowser2/DriverHealth UI.  The generic
+  # UefiBootManagerLib default points at that missing formset and asserts at
+  # ReadyToBoot before it can start the FV-resident Shell or an OS loader.
+  # A zero GUID is the documented way to disable that optional repair UI.
+  gEfiMdeModulePkgTokenSpaceGuid.PcdDriverHealthConfigureForm|{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }
+
   #
   # DDR Memory
   #
