@@ -13,6 +13,10 @@
 STATIC EFI_MEMORY_REGION_DESCRIPTOR gBaseMemoryDescriptor[] = {
   // Name, Address, Length, HobOption, ResourceType, ResourceAttribute, MemoryType, ArmAttribute
   {"UEFI Stack",         0x40000000, 0x00040000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK},
+  // MemoryMapLib is statically linked into DXE modules, so each image may
+  // validate the LK FDT after the MMU is enabled.  Reserve and identity-map
+  // the complete accepted FDT window; it ends exactly at the relocated FD.
+  {"Live LK FDT",        0x4BC80000, 0x00080000, AddMem, MEM_RES, SYS_MEM_CAP, Reserv, WRITE_BACK},
   // Keep the FD outside LK's 0x40080000 kernel decompression address so the
   // BootShim never overwrites the instructions it is actively executing.
   {"UEFI FD",            0x4BD00000, 0x00200000, AddMem, SYS_MEM, SYS_MEM_CAP, BsData, WRITE_BACK},
