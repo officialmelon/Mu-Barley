@@ -50,7 +50,7 @@ Do not flash build artifacts automatically.
 | DXE heap `0x56000000..0x6BFFFFFF` | Both live LK `mblock_info` captures, mblock 7 | VERIFIED STABLE |
 | one continuous 8 GiB region from `0x40000000` | No valid source; conflicts with dynamic mblock carveouts | INVALID — NOT USED |
 
-## Live-FDT memory gate
+## Live-FDT memory map
 
 Two independently captured LK-patched FDTs establish physical RAM as
 `0x40000000 + 0x200000000`. Their `/memory/reg`, all 23 fixed
@@ -62,19 +62,24 @@ Two independently captured LK-patched FDTs establish physical RAM as
 | `live-barley.dtb` | `A09ED364C2E98E3E08CBB56D9AD7EC486007486833A0BA25E05E616BE607CE4A` |
 | `live-barley-2.dtb` | `4DD7BB763DE6EED898E2D085DEF7D29308FF37D6F8B48C6DCF5DE6C039E40070` |
 
-`MemoryMapLib` validates the live LK FDT in place at the verified DTB handoff
-address `0x4BC80000`. It checks the FDT header and size, parses `/memory/reg`,
-walks every `/reserved-memory` child `reg`, observes `no-map`, and rejects the
-broad memory map if the expected topology or any reservation-to-mblock
-relationship changes. Free descriptors are limited to mblocks stable in both
-captures. The gaps preserve ATF, TEE, GZ, SCP, SSPM, modem/CCCI, pstore,
-DRAMC-tail, boot-image, DTB, and other LK allocations.
+Lenovo's 64-bit LK jump ABI passes the patched DTB as the first argument. The
+BootShim preserves `x0`, and Barley's earliest SEC hook saves it in the reserved
+handoff page at `0x40040000`. `MemoryMapLib` prefers that pointer and retains
+`0x4BC80000` only as a compatibility fallback.
+
+The live map is constructed from `/memory/reg` and MediaTek's native
+`/memory/mblock_info` free list. Every `/reserved-memory` child `reg`, the live
+DTB itself, UEFI stack/FD/heap, and both distinct display reservations are
+subtracted before conventional-memory HOBs are published. Fixed `no-map`
+reservations remain unmapped; the one explicit exception is LK's framebuffer
+carveout, which the passive GOP must access. No node count, boot mode, or
+volatile chosen property is used as a validity gate.
 
 The former provisional `0x40280000 + 0x03C00000` heap is gone. SEC/DXE uses
-stable mblock 7 at `0x56000000 + 0x16000000`. If live-FDT validation fails, the
-implementation fails closed and does not add the other broad mblocks.
-`RamManagerDxe` remains excluded because it would flatten the physical 8 GiB
-range into one unsafe allocation.
+stable mblock 7 at `0x56000000 + 0x16000000`. If no dynamic LK map can be
+parsed, the implementation falls back only to the mblocks that were
+byte-identical in both physical captures. It never flattens the physical 8 GiB
+range, and `RamManagerDxe` remains excluded for the same reason.
 
 `BarleyLkGopDxe` wraps the display pipeline already configured by Lenovo LK; it
 does not initialize DSI, reset the panel, change clocks/timings, or access
@@ -90,9 +95,9 @@ mirrors every BLT to all three verified surfaces with each surface's own
 stride. Its public mode is `PixelBltOnly`, and its direct BLT routines force
 the BGRA alpha byte to `0xFF` for fills and buffer-to-video writes. The distinct
 LK logo decompression allocation at `0x7A3F8000` and FDT display reservation at
-`0x7E605000` are not treated as scanout. `LK Framebuffer`, `LK Logo Surface`,
-and `Display Reserved` remain separate reserved descriptors. LK free mblock
-11 remains omitted.
+`0x7E605000` are not treated as scanout or exposed as conventional memory. Only
+the verified OVL framebuffer carveout is mapped for GOP access. LK free mblock
+11 remains unavailable because it intersects the separate display reservation.
 
 Buttons are intentionally omitted. Android evidence shows power and
 volume-down on `mtk-pmic-keys`, while volume-up is on `mtk-kpd`. Lancelot's
@@ -107,10 +112,12 @@ single-core boot exists.
 
 The port reuses `GpioImplLib`, `ClockImplLib`, `PmicWrapperImplLib`, and
 `MsdcImplLib`. Barley overrides only `PlatformSecLib`: Lenovo LK has already
-entered at EL1, so its assembly initializer is a no-op and its C initializer
-only disables TOPRGU. This avoids the Lancelot-specific OVL mutation in the
-shared MT6768 library. Peripheral DXE drivers remain excluded from the minimal
-shell image until core boot is proven.
+entered at EL1, so its assembly initializer only preserves the incoming FDT
+pointer and its C initializer disables TOPRGU. This avoids the
+Lancelot-specific OVL mutation in the shared MT6768 library. Standard DXE
+components provide console, eMMC, microSD, FAT, and the internal shell; Barley
+adds hardware-specific code only where the MT6768 implementation needs device
+configuration.
 
 ## M2 execution gate
 
