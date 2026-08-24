@@ -104,10 +104,13 @@ conventional memory. Only the verified OVL framebuffer carveout is mapped for
 GOP access. LK free mblock 11 remains unavailable because it intersects the
 separate display reservation.
 
-Buttons are intentionally omitted. Android evidence shows power and
-volume-down on `mtk-pmic-keys`, while volume-up is on `mtk-kpd`. Lancelot's
-GPIO-93 volume-down assignment does not apply, and no GPIO/keyscan value is
-invented here.
+Physical keys use the two paths present in Barley's live device tree. The
+MT6768 keypad controller supplies the active-low `KP_MEM1[0]` navigation key,
+while the MT6358 PMIC `TOPSTATUS` register supplies Home and power. UEFI maps
+the two navigation keys to Up/Down, a power-key tap to Enter, and a long power
+hold to Escape. The Barley DSDT publishes the same KPD and PWRAP resources as
+`ACPI\BAR0001` for the companion Windows HID transport; it does not fabricate
+a GPIO button array or reuse lancelot's unrelated GPIO-93 assignment.
 
 Initial ACPI reuses the MT6768 single-core MADT, generic timer, GIC, minimal
 DSDT, FADT, and common SSDT. Multicore PSCI/MADT work is deferred until a stable
@@ -116,7 +119,8 @@ single-core boot exists.
 ## Reused MT6768 components
 
 The port reuses `GpioImplLib`, `ClockImplLib`, `PmicWrapperImplLib`, and
-`MsdcImplLib`. Barley overrides only `PlatformSecLib`: Lenovo LK has already
+`MsdcImplLib`. Barley overrides only the platform-facing libraries needed for
+its LK handoff, memory map, and physical keys. Lenovo LK has already
 entered at EL1, so its assembly initializer only preserves the incoming FDT
 pointer. Its C initializer disables TOPRGU and applies the shared MT6768
 constant-blend operation to LK's actual full-screen layer 3. Standard DXE

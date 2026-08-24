@@ -1,9 +1,8 @@
 /** @file
-  Lenovo Barley PMIC-key implementation for the common Silicium keypad stack.
+  Lenovo Barley physical-key implementation for the common Silicium keypad stack.
 
-  The MT6358 secondary key is the only verified navigation key on Barley.  The
-  tablet's other volume key is provided by the SoC keypad controller and is
-  intentionally left unsupported until that controller is brought up.
+  MT6358 Home is the down-navigation key.  The SoC keypad controller supplies
+  the up-navigation key through its already-configured, active-low MEM1 bit 0.
 
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
@@ -12,6 +11,7 @@
 
 #include <Library/BaseMemoryLib.h>
 #include <Library/DebugLib.h>
+#include <Library/IoLib.h>
 #include <Library/KeypadDeviceLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 
@@ -20,7 +20,14 @@
 #define MILLISECONDS_TO_NANOSECONDS(Milliseconds) \
   (((UINT64)(Milliseconds)) * 1000000ULL)
 
+#define BARLEY_KPD_BASE      0x10010000U
+#define BARLEY_KPD_STA       (BARLEY_KPD_BASE + 0x0000U)
+#define BARLEY_KPD_MEM1      (BARLEY_KPD_BASE + 0x0004U)
+#define BARLEY_KPD_DEBOUNCE  (BARLEY_KPD_BASE + 0x0018U)
+#define BARLEY_KPD_EN        (BARLEY_KPD_BASE + 0x0024U)
+
 STATIC MTK_PMIC_PROTOCOL  *mPmicProtocol;
+STATIC KEY_CONTEXT         mKpdKey;
 STATIC KEY_CONTEXT         mNavigationKey;
 STATIC KEY_CONTEXT         mPowerKey;
 
@@ -113,6 +120,15 @@ KeypadDeviceConstructor (
     return RETURN_NOT_FOUND;
   }
 
+  DEBUG ((
+    DEBUG_INFO,
+    "Barley KPD: STA=0x%04x MEM1=0x%04x DEBOUNCE=0x%04x EN=0x%04x\n",
+    MmioRead16 (BARLEY_KPD_STA),
+    MmioRead16 (BARLEY_KPD_MEM1),
+    MmioRead16 (BARLEY_KPD_DEBOUNCE),
+    MmioRead16 (BARLEY_KPD_EN)
+    ));
+
   return RETURN_SUCCESS;
 }
 
@@ -122,8 +138,11 @@ KeypadDeviceReset (
   IN KEYPAD_DEVICE_PROTOCOL  *This
   )
 {
+  ResetKeyContext (&mKpdKey);
+  mKpdKey.KeyData.Key.ScanCode = SCAN_UP;
+
   ResetKeyContext (&mNavigationKey);
-  mNavigationKey.KeyData.Key.ScanCode = SCAN_UP;
+  mNavigationKey.KeyData.Key.ScanCode = SCAN_DOWN;
 
   ResetKeyContext (&mPowerKey);
   mPowerKey.KeyData.Key.UnicodeChar = CHAR_CARRIAGE_RETURN;
@@ -142,6 +161,9 @@ KeypadDeviceGetKeys (
   if ((mPmicProtocol == NULL) || (KeypadReturnApi == NULL)) {
     return EFI_NOT_READY;
   }
+
+  IsPressed = (MmioRead16 (BARLEY_KPD_MEM1) & BIT0) == 0;
+  UpdateKey (&mKpdKey, KeypadReturnApi, IsPressed, Delta, FALSE);
 
   IsPressed = FALSE;
   mPmicProtocol->HomeButtonPressed (&IsPressed);

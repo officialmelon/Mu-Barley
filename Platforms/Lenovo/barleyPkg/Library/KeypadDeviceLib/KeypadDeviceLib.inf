@@ -18,6 +18,7 @@
 [LibraryClasses]
   BaseMemoryLib
   DebugLib
+  IoLib
   UefiBootServicesTableLib
 
 [Protocols]
