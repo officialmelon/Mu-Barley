@@ -1,14 +1,16 @@
 /** @file
   Passive GOP for the scanout surfaces configured by Lenovo LK.
 
-  The driver never accesses display MMIO.  Lenovo's LK log proves that its
+  The driver never writes display MMIO.  Lenovo's LK log proves that its
   full-screen layer 0 alternates between FB0 and FB2 while its full-screen
-  overlay remains on FB1.  Register readback is not a reliable ownership
-  contract after LK has handed control to the payload, so every GOP write is
-  mirrored to all three buffers in the verified framebuffer carveout.
+  overlay remains on FB1.  FB1 is the stable top full-screen layer and is
+  therefore the operating system's linear framebuffer, while every firmware
+  GOP write is mirrored to all three buffers in the verified carveout.
 
-  PixelBltOnly keeps consumers from mistaking one member of LK's composited
-  triple-buffer pool for a single authoritative linear framebuffer.
+  Firmware BLTs are mirrored because LK owns more than one full-screen layer.
+  The GOP mode nevertheless publishes the live primary layer as a standard
+  linear framebuffer.  This is required by operating systems after
+  ExitBootServices(), when GOP.Blt() is no longer callable.
 
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
@@ -27,7 +29,7 @@
 #include <BarleyLkDisplay.h>
 #include <Configuration/BootDevices.h>
 
-#define BARLEY_PRIMARY_TARGET       2U
+#define BARLEY_PRIMARY_TARGET  1U
 
 typedef struct {
   EFI_PHYSICAL_ADDRESS    Base;
@@ -46,6 +48,10 @@ STATIC_ASSERT (
   "LK FB0 allocation must end at FB1"
   );
 STATIC_ASSERT (
+  BARLEY_FB1_BASE + (BARLEY_PITCH_PACKED * BARLEY_DISPLAY_HEIGHT) <= BARLEY_FB2_BASE,
+  "LK FB1 scanout must end before FB2"
+  );
+STATIC_ASSERT (
   BARLEY_FB2_BASE + (BARLEY_PITCH_ALIGNED * BARLEY_DISPLAY_HEIGHT) <= BARLEY_FB_CARVEOUT_END,
   "LK FB2 allocation must remain inside the framebuffer carveout"
   );
@@ -54,9 +60,9 @@ STATIC EFI_GRAPHICS_OUTPUT_MODE_INFORMATION mModeInfo = {
   0,
   BARLEY_DISPLAY_WIDTH,
   BARLEY_DISPLAY_HEIGHT,
-  PixelBltOnly,
+  PixelBlueGreenRedReserved8BitPerColor,
   { 0, 0, 0, 0 },
-  0
+  BARLEY_PITCH_PACKED / BARLEY_DISPLAY_BYTES_PER_PIXEL
 };
 
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE mMode = {
@@ -64,8 +70,8 @@ STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE mMode = {
   0,
   &mModeInfo,
   sizeof (mModeInfo),
-  0,
-  0
+  BARLEY_FB1_BASE,
+  BARLEY_PITCH_PACKED * BARLEY_DISPLAY_HEIGHT
 };
 
 STATIC

@@ -91,13 +91,18 @@ carveout and the aligned allocations are spaced by `0x008E8000`.
 
 Register readback after LK's handoff does not identify the composited buffer
 pool reliably enough to gate GOP installation. The passive GOP therefore
-mirrors every BLT to all three verified surfaces with each surface's own
-stride. Its public mode is `PixelBltOnly`, and its direct BLT routines force
-the BGRA alpha byte to `0xFF` for fills and buffer-to-video writes. The distinct
-LK logo decompression allocation at `0x7A3F8000` and FDT display reservation at
-`0x7E605000` are not treated as scanout or exposed as conventional memory. Only
-the verified OVL framebuffer carveout is mapped for GOP access. LK free mblock
-11 remains unavailable because it intersects the separate display reservation.
+mirrors firmware BLTs to all three verified surfaces with each surface's own
+stride and forces the BGRA alpha byte to `0xFF` for fills and buffer-to-video
+writes. SEC preserves LK's layer configuration and only enables the MT6768
+constant-blend bit on the stable full-screen layer 3, matching the shared
+MT6768 behavior for an OS-owned BGRX framebuffer. The GOP publishes that layer
+as the standard linear mode used after `ExitBootServices()`: BGRR8888 at `0x7C5C8000`,
+1200 x 1920, 1200 pixels per scan line, and a `0x008CA000`-byte framebuffer.
+The distinct LK logo decompression allocation at `0x7A3F8000` and FDT display
+reservation at `0x7E605000` are not treated as scanout or exposed as
+conventional memory. Only the verified OVL framebuffer carveout is mapped for
+GOP access. LK free mblock 11 remains unavailable because it intersects the
+separate display reservation.
 
 Buttons are intentionally omitted. Android evidence shows power and
 volume-down on `mtk-pmic-keys`, while volume-up is on `mtk-kpd`. Lancelot's
@@ -113,8 +118,8 @@ single-core boot exists.
 The port reuses `GpioImplLib`, `ClockImplLib`, `PmicWrapperImplLib`, and
 `MsdcImplLib`. Barley overrides only `PlatformSecLib`: Lenovo LK has already
 entered at EL1, so its assembly initializer only preserves the incoming FDT
-pointer and its C initializer disables TOPRGU. This avoids the
-Lancelot-specific OVL mutation in the shared MT6768 library. Standard DXE
+pointer. Its C initializer disables TOPRGU and applies the shared MT6768
+constant-blend operation to LK's actual full-screen layer 3. Standard DXE
 components provide console, eMMC, microSD, FAT, and the internal shell; Barley
 adds hardware-specific code only where the MT6768 implementation needs device
 configuration.
