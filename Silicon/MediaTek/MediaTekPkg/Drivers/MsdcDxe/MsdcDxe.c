@@ -21,10 +21,11 @@ MsdcPollCount (
 
   // EDK2's SD/eMMC bus drivers express this pass-through timeout in
   // microseconds. Convert it to iterations at the caller's polling cadence.
+  // A zero packet timeout has no caller-provided bound, so use the bounded
+  // operation default.  Otherwise honor SdDxe's size-derived timeout: large
+  // multi-block transfers can legitimately require more than five seconds,
+  // especially on a removable card running at a conservative bus rate.
   TimeoutUs = (PacketTimeout == 0) ? DefaultTimeoutUs : PacketTimeout;
-  if (TimeoutUs > MSDC_DATA_TIMEOUT_US) {
-    TimeoutUs = MSDC_DATA_TIMEOUT_US;
-  }
 
   return (UINTN)((TimeoutUs + PollDelayUs - 1) / PollDelayUs);
 }
@@ -113,10 +114,6 @@ MsdcPassThru (
     return EFI_INVALID_PARAMETER;
   }
 
-  if (Event != NULL) {
-    return EFI_UNSUPPORTED;
-  }
-
   if ((Packet->SdMmcCmdBlk == NULL) || (Packet->SdMmcStatusBlk == NULL)) {
     return EFI_INVALID_PARAMETER;
   }
@@ -133,6 +130,15 @@ MsdcPassThru (
 
   Status = MsdcSendCmd (Private, Packet);
   Packet->TransactionStatus = Status;
+
+  // The MSDC host is polling-only, so complete nonblocking requests before
+  // returning and signal the caller's completion event.  SdDxe publishes
+  // BlockIo2 on top of this protocol; rejecting Event would advertise an
+  // asynchronous storage path that can never complete.
+  if (Event != NULL) {
+    return gBS->SignalEvent (Event);
+  }
+
   return Status;
 }
 
@@ -227,7 +233,22 @@ MsdcResetDevice (
   EFI_SD_MMC_PASS_THRU_PROTOCOL *This,
   UINT8 Slot)
 {
-  return EFI_UNSUPPORTED;
+  MSDC_PRIVATE_DATA *Private;
+
+  if ((This == NULL) || (Slot != 0)) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Private = MSDC_PRIVATE_FROM_THIS (This);
+  if (Private->SdInfo.CardType == UnknownCard) {
+    return EFI_NO_MEDIA;
+  }
+
+  // All MSDC transactions complete synchronously, so there is no queued I/O
+  // to abort here.  Do not electrically reset or re-identify the card: the
+  // generic SdDxe BlockIo reset contract only requires outstanding requests
+  // to be quiesced, matching the reference host-controller implementation.
+  return EFI_SUCCESS;
 }
 
 EFI_STATUS
