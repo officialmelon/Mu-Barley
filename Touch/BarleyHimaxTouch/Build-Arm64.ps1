@@ -10,7 +10,10 @@ param(
 
     [switch]$NoCfg,
 
-    [switch]$DefaultBase
+    [switch]$DefaultBase,
+
+    [ValidateSet('lld', 'ms')]
+    [string]$Linker = 'lld'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,6 +25,14 @@ $KitVersion = '10.0.26100.0'
 $KmdfVersion = '1.33'
 $ClangCl = (Get-Command clang -ErrorAction Stop).Source
 $LldLink = (Get-Command lld-link -ErrorAction Stop).Source
+if ($Linker -eq 'ms') {
+    $MsLink = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\*\bin\Hostx64\arm64\link.exe' |
+        Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+    if (-not $MsLink) { throw 'MSVC arm64 link.exe was not found' }
+    $LinkTool = $MsLink
+} else {
+    $LinkTool = $LldLink
+}
 
 if ([string]::IsNullOrWhiteSpace($FirmwarePath)) {
     $FirmwarePath = Join-Path $Workspace `
@@ -111,6 +122,9 @@ $Link = @(
 )
 if (-not $DefaultBase) { $Link += '/base:0x1C0000000' }
 $Link += $(if ($NoCfg) { '/GUARD:NO' } else { '/guard:cf' })
+if ($Linker -eq 'ms') {
+    $Link += @('/incremental:no', '/opt:ref', '/opt:icf', '/dynamicbase', '/nxcompat')
+}
 $Link = $Link + $Objects + @(
     "/libpath:$KmLib", "/libpath:$WdfLib",
     'wdfdriverentry.lib', 'wdfldr.lib', 'vhfkm.lib',
@@ -121,9 +135,9 @@ if ($Configuration -eq 'Debug') {
     $Link += @('/debug', "/pdb:$(Join-Path $OutDir 'BarleyHimaxTouch.pdb')")
 }
 
-& $LldLink @Link
+& $LinkTool @Link
 if ($LASTEXITCODE -ne 0) {
-    throw "lld-link failed with exit code $LASTEXITCODE"
+    throw "link failed with exit code $LASTEXITCODE"
 }
 
 $SignTool = "C:\Program Files (x86)\Windows Kits\10\bin\$KitVersion\x64\signtool.exe"
