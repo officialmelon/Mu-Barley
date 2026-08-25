@@ -100,7 +100,8 @@ foreach ($SourceName in @('barley_touch.c', 'mtk_spi.c', 'himax_hx83102j.c')) {
 
 $Driver = Join-Path $OutDir 'BarleyHimaxTouch.sys'
 $Link = @(
-    '/nologo', '/driver', '/release', '/Brepro', '/subsystem:native',
+    '/nologo', '/driver', '/release', '/Brepro', '/subsystem:native,6.2',
+    '/osversion:10.0', '/base:0x1C0000000', '/stack:0x40000,0x1000',
     '/machine:arm64', '/entry:FxDriverEntry', '/nodefaultlib', '/guard:cf',
     "/out:$Driver"
 ) + $Objects + @(
