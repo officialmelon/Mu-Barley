@@ -475,6 +475,28 @@ BarleyTouchEvtDeviceAdd(
     return STATUS_SUCCESS;
 }
 
+static VOID
+BarleyWriteDiag(
+    _In_ PCWSTR ValueName,
+    ULONG Status
+    )
+{
+    OBJECT_ATTRIBUTES attributes;
+    UNICODE_STRING keyPath;
+    UNICODE_STRING value;
+    HANDLE key;
+
+    RtlInitUnicodeString(&keyPath,
+        L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Services\\BarleyHimaxTouch");
+    InitializeObjectAttributes(&attributes, &keyPath,
+        OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    if (NT_SUCCESS(ZwOpenKey(&key, KEY_SET_VALUE, &attributes))) {
+        RtlInitUnicodeString(&value, ValueName);
+        ZwSetValueKey(key, &value, 0, REG_DWORD, &Status, sizeof(ULONG));
+        ZwClose(key);
+    }
+}
+
 NTSTATUS
 DriverEntry(
     _In_ PDRIVER_OBJECT DriverObject,
@@ -482,13 +504,17 @@ DriverEntry(
     )
 {
     WDF_DRIVER_CONFIG config;
+    NTSTATUS status;
 
+    BarleyWriteDiag(L"DiagReached", 0);
     ExInitializeDriverRuntime(DrvRtPoolNxOptIn);
     WDF_DRIVER_CONFIG_INIT(&config, BarleyTouchEvtDeviceAdd);
-    return WdfDriverCreate(
+    status = WdfDriverCreate(
         DriverObject,
         RegistryPath,
         WDF_NO_OBJECT_ATTRIBUTES,
         &config,
         WDF_NO_HANDLE);
+    BarleyWriteDiag(L"DiagCreateStatus", status);
+    return status;
 }
