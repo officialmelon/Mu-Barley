@@ -76,5 +76,29 @@ DefinitionBlock ("", "DSDT", 2, "LENOVO", "BARLEY", 1)
 
             Method (_STA, 0, NotSerialized) { Return (0x0F) }
         }
+
+        // Lenovo's live FDT and stock Android module identify the panel touch
+        // controller as a Himax HX83102J zero-flash device on MT6768 SPI0.
+        // BAR0002 is a resource-described Windows function device; it is not
+        // presented as HID-over-I2C or HID-over-SPI because neither transport
+        // matches the physical controller protocol.
+        //
+        // The resource order is part of the BAR0002 v1 contract:
+        //   0: SPI0, 1: TOPCKGEN, 2: INFRACFG_AO, 3: GPIO.
+        Device (TPAD)
+        {
+            Name (_HID, "BAR0002")
+            Name (_UID, 0)
+            Name (_DDN, "Barley Himax HX83102J touchscreen")
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x1100A000, 0x00001000)
+                Memory32Fixed (ReadWrite, 0x10000000, 0x00001000)
+                Memory32Fixed (ReadWrite, 0x10001000, 0x00001000)
+                Memory32Fixed (ReadWrite, 0x10005000, 0x00001000)
+            })
+
+            Method (_STA, 0, NotSerialized) { Return (0x0F) }
+        }
     }
 }
