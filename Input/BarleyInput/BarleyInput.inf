@@ -1,0 +1,66 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=HIDClass
+ClassGuid={745A17A0-74D3-11D0-B6FE-00A0C90F57DA}
+Provider=%Provider%
+DriverVer=08/24/2026,0.1.0.0
+CatalogFile=BarleyInput.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DefaultDestDir=13
+
+[SourceDisksNames]
+1=%DiskName%,,,
+
+[SourceDisksFiles]
+BarleyInput.sys=1
+
+[Manufacturer]
+%Manufacturer%=Models,NTarm64.10.0...22000
+
+[Models.NTarm64.10.0...22000]
+%DeviceDesc%=BarleyInput,ACPI\BAR0001
+
+[BarleyInput.NT]
+CopyFiles=DriverCopy
+Include=MsHidKmdf.inf
+Needs=MsHidKmdf.NT
+
+[BarleyInput.NT.HW]
+Include=MsHidKmdf.inf
+Needs=MsHidKmdf.NT.HW
+
+[BarleyInput.NT.Services]
+Include=MsHidKmdf.inf
+Needs=MsHidKmdf.NT.Services
+AddService=BarleyInput,0,BarleyInput.Service
+
+[BarleyInput.NT.Filters]
+AddFilter=BarleyInput,,BarleyInput.Filter
+
+[BarleyInput.Filter]
+FilterPosition=Lower
+
+[BarleyInput.Service]
+DisplayName=%ServiceDesc%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%13%\BarleyInput.sys
+
+[BarleyInput.NT.Wdf]
+KmdfService=BarleyInput,BarleyInput.Wdf
+
+[BarleyInput.Wdf]
+KmdfLibraryVersion=1.33
+
+[DriverCopy]
+BarleyInput.sys
+
+[Strings]
+Provider="Project Silicium"
+Manufacturer="Project Silicium"
+DeviceDesc="Lenovo Tab M11 Barley Physical Keys"
+ServiceDesc="Barley Physical-Key HID Transport"
+DiskName="Barley Windows Drivers"

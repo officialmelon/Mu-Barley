@@ -1,0 +1,8 @@
+**/out/
+.vs/
+*.log
+*.obj
+*.pdb
+*.sys
+*.cat
+

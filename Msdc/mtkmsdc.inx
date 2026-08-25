@@ -1,0 +1,63 @@
+; MediaTek MT6768 MSDC1 SDPORT miniport -- Barley diagnostic package.
+; This binds only to the vendor ACPI ID.  MT6768 MSDC is not SDHCI/SDA and
+; must never be advertised with the standard-compatible PNP0D40 ID.
+
+[Version]
+Signature="$Windows NT$"
+Class=SDHost
+ClassGUID={a0a588a4-c46f-4b37-b7ea-c82fe89870c6}
+Provider=%ProviderName%
+DriverVer=08/24/2026,0.1.0.0
+CatalogFile=mtkmsdc.cat
+PnpLockdown=1
+
+[SourceDisksNames]
+1=%DiskName%
+
+[SourceDisksFiles]
+mtkmsdc.sys=1
+
+[DestinationDirs]
+DriverCopyFiles=12
+
+[Manufacturer]
+%ManufacturerName%=MediaTek,NTarm64.10.0
+
+[MediaTek.NTarm64.10.0]
+%Msdc1.DeviceDesc%=Msdc1_Install,ACPI\MTK6768
+
+[Msdc1_Install]
+CopyFiles=DriverCopyFiles
+
+[Msdc1_Install.HW]
+AddReg=Msdc1_Hardware
+
+[Msdc1_Hardware]
+HKR,,Driver,,"mtkmsdc.sys"
+HKR,,UINumberDescFormat,,%SlotDescription%
+
+[Msdc1_Install.Services]
+AddService=mtkmsdc,0x00000002,Msdc_Service
+
+[Msdc_Service]
+DisplayName=%Msdc1.ServiceDesc%
+ServiceType=1
+StartType=0
+ErrorControl=1
+ServiceBinary=%12%\mtkmsdc.sys
+LoadOrderGroup=System Bus Extender
+BootFlags=0x00000008
+
+[DriverCopyFiles]
+mtkmsdc.sys
+
+[ControlFlags]
+ExcludeFromSelect=*
+
+[Strings]
+ProviderName="Barley Windows Enablement"
+ManufacturerName="MediaTek"
+DiskName="Barley MT6768 MSDC driver package"
+Msdc1.DeviceDesc="MediaTek MT6768 MSDC1 microSD host controller"
+Msdc1.ServiceDesc="MediaTek MT6768 MSDC SDPORT miniport"
+SlotDescription="microSD slot %1!u!"

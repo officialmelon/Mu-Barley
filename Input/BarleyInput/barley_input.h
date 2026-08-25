@@ -1,0 +1,72 @@
+#pragma once
+
+#include <ntddk.h>
+#include <wdf.h>
+#include <hidport.h>
+
+typedef UCHAR HID_REPORT_DESCRIPTOR, *PHID_REPORT_DESCRIPTOR;
+
+#define BARLEY_POLL_PERIOD_MS          20U
+#define BARLEY_POWER_LONG_PRESS_TICKS  25U
+
+#define BARLEY_KPD_MEM1_OFFSET         0x0004U
+
+#define BARLEY_PWRAP_INIT_DONE2_OFFSET 0x0094U
+#define BARLEY_PWRAP_WACS2_CMD_OFFSET  0x0C20U
+#define BARLEY_PWRAP_WACS2_RDATA_OFFSET 0x0C24U
+#define BARLEY_PWRAP_WACS2_VLDCLR_OFFSET 0x0C28U
+
+#define BARLEY_PMIC_TOPSTATUS          0x0028U
+#define BARLEY_PMIC_PWRKEY_MASK        0x0002U
+#define BARLEY_PMIC_HOME_MASK          0x0008U
+
+#define BARLEY_WACS_FSM_IDLE           0U
+#define BARLEY_WACS_FSM_WFVLDCLR       6U
+#define BARLEY_WACS_MAX_POLLS          1000U
+#define BARLEY_WACS_POLL_DELAY_US      10U
+
+#define BARLEY_HID_USAGE_ENTER         0x28U
+#define BARLEY_HID_USAGE_ESCAPE        0x29U
+#define BARLEY_HID_USAGE_TAB           0x2BU
+#define BARLEY_HID_MODIFIER_LEFT_SHIFT 0x02U
+
+#pragma pack(push, 1)
+typedef struct _BARLEY_KEYBOARD_REPORT {
+    UCHAR Modifiers;
+    UCHAR Reserved;
+    UCHAR Keys[6];
+} BARLEY_KEYBOARD_REPORT, *PBARLEY_KEYBOARD_REPORT;
+#pragma pack(pop)
+
+typedef struct _BARLEY_DEVICE_CONTEXT {
+    WDFDEVICE Device;
+    WDFQUEUE ManualReadQueue;
+    WDFTIMER PollTimer;
+
+    PUCHAR KpdRegisters;
+    ULONG KpdLength;
+    PUCHAR PwrapRegisters;
+    ULONG PwrapLength;
+    BOOLEAN PwrapReady;
+
+    BOOLEAN PowerWasDown;
+    BOOLEAN PowerLongSent;
+    ULONG PowerHoldTicks;
+    ULONG TapEnterTicks;
+
+    BARLEY_KEYBOARD_REPORT CurrentReport;
+    BARLEY_KEYBOARD_REPORT LastReported;
+    BOOLEAN HaveLastReport;
+} BARLEY_DEVICE_CONTEXT, *PBARLEY_DEVICE_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(BARLEY_DEVICE_CONTEXT, BarleyGetContext);
+
+DRIVER_INITIALIZE DriverEntry;
+EVT_WDF_DRIVER_DEVICE_ADD BarleyEvtDeviceAdd;
+EVT_WDF_DEVICE_PREPARE_HARDWARE BarleyEvtPrepareHardware;
+EVT_WDF_DEVICE_RELEASE_HARDWARE BarleyEvtReleaseHardware;
+EVT_WDF_DEVICE_D0_ENTRY BarleyEvtD0Entry;
+EVT_WDF_DEVICE_D0_EXIT BarleyEvtD0Exit;
+EVT_WDF_IO_QUEUE_IO_INTERNAL_DEVICE_CONTROL BarleyEvtIoInternalDeviceControl;
+EVT_WDF_TIMER BarleyEvtPollTimer;
+

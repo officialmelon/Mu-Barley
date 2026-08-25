@@ -1,0 +1,63 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=System
+ClassGuid={4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider=%Provider%
+DriverVer=08/25/2026,0.1.0.0
+CatalogFile=BarleyHimaxTouch.cat
+PnpLockdown=1
+
+[DestinationDirs]
+DriverCopy=13
+FirmwareCopy=12,drivers
+
+[SourceDisksNames]
+1=%DiskName%,,,
+
+[SourceDisksFiles]
+BarleyHimaxTouch.sys=1
+Himax_firmware_boe.bin=1
+
+[Manufacturer]
+%Manufacturer%=Models,NTarm64.10.0...22000
+
+[Models.NTarm64.10.0...22000]
+%DeviceDesc%=BarleyHimaxTouch,ACPI\BAR0002
+
+[BarleyHimaxTouch.NT]
+CopyFiles=DriverCopy,FirmwareCopy
+
+[BarleyHimaxTouch.NT.HW]
+AddReg=BarleyHimaxTouch.Vhf
+
+[BarleyHimaxTouch.Vhf]
+HKR,,"LowerFilters",0x00010000,"vhf"
+
+[BarleyHimaxTouch.NT.Services]
+AddService=BarleyHimaxTouch,0x00000002,BarleyHimaxTouch.Service
+
+[BarleyHimaxTouch.Service]
+DisplayName=%ServiceDesc%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%13%\BarleyHimaxTouch.sys
+
+[BarleyHimaxTouch.NT.Wdf]
+KmdfService=BarleyHimaxTouch,BarleyHimaxTouch.Wdf
+
+[BarleyHimaxTouch.Wdf]
+KmdfLibraryVersion=1.33
+
+[DriverCopy]
+BarleyHimaxTouch.sys
+
+[FirmwareCopy]
+Himax_firmware_boe.bin
+
+[Strings]
+Provider="Project Silicium"
+Manufacturer="Project Silicium"
+DeviceDesc="Lenovo Tab M11 Barley HX83102J Touchscreen"
+ServiceDesc="Barley HX83102J Touchscreen Source Driver"
+DiskName="Barley Windows Drivers"
