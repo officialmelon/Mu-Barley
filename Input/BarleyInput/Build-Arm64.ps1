@@ -1,10 +1,14 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
 
     [ValidatePattern('^[0-9A-Fa-f]{40}$')]
-    [string]$SigningThumbprint = ''
+    [string]$SigningThumbprint = '',
+
+    [switch]$NoCfg,
+
+    [switch]$DefaultBase
 )
 
 $ErrorActionPreference = 'Stop'
@@ -80,9 +84,13 @@ if ($Configuration -eq 'Debug') {
 if ($LASTEXITCODE -ne 0) { throw "clang-cl failed with exit code $LASTEXITCODE" }
 
 $Link = @(
-    '/nologo', '/driver', '/release', '/Brepro', '/subsystem:native,6.2', '/osversion:10.0', '/base:0x1C0000000', '/stack:0x40000,0x1000', '/machine:arm64',
-    '/entry:FxDriverEntry', '/nodefaultlib', '/guard:cf',
-    "/out:$Driver", $Object,
+    '/nologo', '/driver', '/release', '/Brepro', '/subsystem:native,6.2', '/osversion:10.0', '/stack:0x40000,0x1000', '/machine:arm64',
+    '/entry:FxDriverEntry', '/nodefaultlib',
+    "/out:$Driver"
+)
+if (-not $DefaultBase) { $Link += '/base:0x1C0000000' }
+$Link += $(if ($NoCfg) { '/GUARD:NO' } else { '/guard:cf' })
+$Link = $Link + @($Object,
     "/libpath:$KmLib", "/libpath:$WdfLib",
     'wdfdriverentry.lib', 'wdfldr.lib', 'ntoskrnl.lib', 'hal.lib',
     'BufferOverflowFastFailK.lib'
