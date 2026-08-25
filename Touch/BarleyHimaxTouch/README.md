@@ -44,3 +44,16 @@ test package by `Build-Arm64.ps1` and is not part of the portable source.
 The script validates the exact stock firmware size and SHA-256, builds an
 ARM64 KMDF driver with the installed WDK libraries, links `vhfkm.lib`, and
 runs `Inf2Cat` over the complete package.
+
+For a development WinPE with `testsigning` enabled, pass the SHA-1
+thumbprint of a private code-signing certificate in the current user's `My`
+store:
+
+```powershell
+.\Build-Arm64.ps1 -Configuration Release `
+    -SigningThumbprint 0123456789ABCDEF0123456789ABCDEF01234567
+```
+
+The script signs the SYS before catalog generation, then signs the generated
+catalog and verifies that both signatures use the requested certificate. A
+production package still requires Microsoft attestation or WHQL signing.

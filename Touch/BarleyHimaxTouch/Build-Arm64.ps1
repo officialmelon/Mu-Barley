@@ -3,7 +3,10 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
 
-    [string]$FirmwarePath = ''
+    [string]$FirmwarePath = '',
+
+    [ValidatePattern('^[0-9A-Fa-f]{40}$')]
+    [string]$SigningThumbprint = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -115,6 +118,17 @@ if ($LASTEXITCODE -ne 0) {
     throw "lld-link failed with exit code $LASTEXITCODE"
 }
 
+$SignTool = "C:\Program Files (x86)\Windows Kits\10\bin\$KitVersion\x64\signtool.exe"
+if (-not [string]::IsNullOrWhiteSpace($SigningThumbprint)) {
+    if (-not (Test-Path -LiteralPath $SignTool)) {
+        throw "signtool was not found at $SignTool"
+    }
+    & $SignTool sign /v /s My /sha1 $SigningThumbprint /fd SHA256 $Driver
+    if ($LASTEXITCODE -ne 0) {
+        throw "signtool failed to sign the driver: $LASTEXITCODE"
+    }
+}
+
 $PackageDir = Join-Path $OutDir 'package'
 New-Item -ItemType Directory -Force -Path $PackageDir | Out-Null
 Copy-Item -LiteralPath $Driver -Destination $PackageDir -Force
@@ -129,10 +143,24 @@ if ($LASTEXITCODE -ne 0) {
     throw "Inf2Cat failed with exit code $LASTEXITCODE"
 }
 
+$Catalog = Join-Path $PackageDir 'BarleyHimaxTouch.cat'
+if (-not [string]::IsNullOrWhiteSpace($SigningThumbprint)) {
+    & $SignTool sign /v /s My /sha1 $SigningThumbprint /fd SHA256 $Catalog
+    if ($LASTEXITCODE -ne 0) {
+        throw "signtool failed to sign the catalog: $LASTEXITCODE"
+    }
+
+    foreach ($SignedFile in @($Driver, (Join-Path $PackageDir 'BarleyHimaxTouch.sys'), $Catalog)) {
+        $Signature = Get-AuthenticodeSignature -LiteralPath $SignedFile
+        if ($Signature.SignerCertificate.Thumbprint -ne $SigningThumbprint) {
+            throw "Unexpected or missing test signature on $SignedFile"
+        }
+    }
+}
+
 $ReadObj = (Get-Command llvm-readobj -ErrorAction Stop).Source
 & $ReadObj --file-headers $Driver
 Get-FileHash -LiteralPath $Driver -Algorithm SHA256
-Get-FileHash -LiteralPath `
-    (Join-Path $PackageDir 'BarleyHimaxTouch.cat') -Algorithm SHA256
+Get-FileHash -LiteralPath $Catalog -Algorithm SHA256
 Get-FileHash -LiteralPath `
     (Join-Path $PackageDir 'Himax_firmware_boe.bin') -Algorithm SHA256

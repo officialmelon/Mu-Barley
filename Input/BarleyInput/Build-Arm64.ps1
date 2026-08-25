@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Debug', 'Release')]
-    [string]$Configuration = 'Release'
+    [string]$Configuration = 'Release',
+
+    [ValidatePattern('^[0-9A-Fa-f]{40}$')]
+    [string]$SigningThumbprint = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,6 +94,17 @@ if ($Configuration -eq 'Debug') {
 & $LldLink @Link
 if ($LASTEXITCODE -ne 0) { throw "lld-link failed with exit code $LASTEXITCODE" }
 
+$SignTool = "C:\Program Files (x86)\Windows Kits\10\bin\$KitVersion\x64\signtool.exe"
+if (-not [string]::IsNullOrWhiteSpace($SigningThumbprint)) {
+    if (-not (Test-Path -LiteralPath $SignTool)) {
+        throw "signtool was not found at $SignTool"
+    }
+    & $SignTool sign /v /s My /sha1 $SigningThumbprint /fd SHA256 $Driver
+    if ($LASTEXITCODE -ne 0) {
+        throw "signtool failed to sign the driver: $LASTEXITCODE"
+    }
+}
+
 Copy-Item -LiteralPath (Join-Path $ProjectDir 'BarleyInput.inf') -Destination $OutDir -Force
 
 $PackageDir = Join-Path $OutDir 'package'
@@ -102,7 +116,22 @@ $Inf2Cat = Join-Path $Wdk "c\bin\$KitVersion\x86\Inf2Cat.exe"
 & $Inf2Cat "/driver:$PackageDir" '/os:10_GE_ARM64'
 if ($LASTEXITCODE -ne 0) { throw "Inf2Cat failed with exit code $LASTEXITCODE" }
 
+$Catalog = Join-Path $PackageDir 'BarleyInput.cat'
+if (-not [string]::IsNullOrWhiteSpace($SigningThumbprint)) {
+    & $SignTool sign /v /s My /sha1 $SigningThumbprint /fd SHA256 $Catalog
+    if ($LASTEXITCODE -ne 0) {
+        throw "signtool failed to sign the catalog: $LASTEXITCODE"
+    }
+
+    foreach ($SignedFile in @($Driver, (Join-Path $PackageDir 'BarleyInput.sys'), $Catalog)) {
+        $Signature = Get-AuthenticodeSignature -LiteralPath $SignedFile
+        if ($Signature.SignerCertificate.Thumbprint -ne $SigningThumbprint) {
+            throw "Unexpected or missing test signature on $SignedFile"
+        }
+    }
+}
+
 $ReadObj = (Get-Command llvm-readobj -ErrorAction Stop).Source
 & $ReadObj --file-headers $Driver
 Get-FileHash -LiteralPath $Driver -Algorithm SHA256
-Get-FileHash -LiteralPath (Join-Path $PackageDir 'BarleyInput.cat') -Algorithm SHA256
+Get-FileHash -LiteralPath $Catalog -Algorithm SHA256

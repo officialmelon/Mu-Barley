@@ -48,18 +48,19 @@ cd C:\Users\braxt\TB330XU\Barley-Windows-Drivers\Input\BarleyInput
 
 The script uses the locally unpacked Microsoft ARM64 WDK NuGet package and the
 available LLVM `clang-cl`/`lld-link` toolchain. Output is under
-`out\ARM64\Release`; the ready-to-sign INF/SYS/CAT set is in its `package`
-subdirectory. The script runs `Inf2Cat`, prints the PE/COFF machine, and hashes
-both the driver and unsigned catalog.
+`out\ARM64\Release`; the INF/SYS/CAT set is in its `package` subdirectory.
+The script runs `Inf2Cat`, prints the PE/COFF machine, and hashes the driver
+and catalog.
 
 ## Test signing and WinPE
 
 This prototype must not be loaded unsigned. For a development-only image:
 
 1. Create a private test code-signing certificate.
-2. Use the generated `package\BarleyInput.cat` (built with the WDK's current
-   ARM64 OS identifier, `10_GE_ARM64`).
-3. Sign both the catalog and SYS with SHA-256 and that certificate.
+2. Pass its SHA-1 thumbprint to `Build-Arm64.ps1 -SigningThumbprint
+   <thumbprint>`. The script signs the SYS before generating the catalog and
+   then signs and verifies the catalog. The catalog uses the WDK's current
+   ARM64 OS identifier, `10_GE_ARM64`.
 4. Add the certificate to the offline WinPE `ROOT` and `TrustedPublisher`
    stores.
 5. Enable `testsigning` for the WinPE BCD entry only while Secure Boot is off.
