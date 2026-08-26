@@ -315,6 +315,7 @@ HimaxInterfaceOn(
     UCHAR increment;
     ULONG retry;
 
+    Context->HimaxDetectSubstage = 2U;
     status = HimaxBusRead(Context, HIMAX_CMD_AHB_READ_DATA,
                           dummy, sizeof(dummy));
     if (!NT_SUCCESS(status)) {
@@ -322,6 +323,7 @@ HimaxInterfaceOn(
     }
 
     for (retry = 0U; retry < 10U; ++retry) {
+        Context->HimaxDetectSubstage = 3U;
         status = HimaxSetBurstMode(Context, FALSE);
         if (!NT_SUCCESS(status)) {
             return status;
@@ -331,11 +333,15 @@ HimaxInterfaceOn(
         if (!NT_SUCCESS(status)) {
             return status;
         }
+        Context->HimaxContinuousValue = continuous;
+        Context->HimaxDetectSubstage = 4U;
         status = HimaxBusRead(Context, HIMAX_CMD_AHB_INCREMENT,
                               &increment, 1U);
         if (!NT_SUCCESS(status)) {
             return status;
         }
+        Context->HimaxIncrementValue = increment;
+        Context->HimaxDetectSubstage = 5U;
         if (continuous == HIMAX_AHB_CONTINUOUS_VALUE &&
             increment == HIMAX_AHB_INCREMENT_VALUE) {
             return STATUS_SUCCESS;
@@ -343,6 +349,7 @@ HimaxInterfaceOn(
         KeStallExecutionProcessor(1000);
     }
 
+    Context->HimaxDetectSubstage = 6U;
     return STATUS_IO_DEVICE_ERROR;
 }
 
@@ -354,26 +361,30 @@ HimaxSenseOff(
     NTSTATUS status;
     ULONG value;
     ULONG retry;
-    UCHAR password;
+    UCHAR password[2];
 
     for (retry = 0U; retry < 5U; ++retry) {
-        password = 0x27U;
+        /*
+         * HX83102J defines the safe-mode key as one little-endian 16-bit
+         * write at command 0x31.  Keeping CS asserted across both password
+         * bytes is part of the wire protocol; two independent command
+         * transactions are not equivalent.
+         */
+        Context->HimaxDetectSubstage = 10U;
+        password[0] = 0x27U;
+        password[1] = 0x95U;
         status = HimaxBusWrite(Context, HIMAX_CMD_SAFE_MODE_LOW,
-                               &password, 1U);
-        if (!NT_SUCCESS(status)) {
-            return status;
-        }
-        password = 0x95U;
-        status = HimaxBusWrite(Context, HIMAX_CMD_SAFE_MODE_HIGH,
-                               &password, 1U);
+                               password, sizeof(password));
         if (!NT_SUCCESS(status)) {
             return status;
         }
 
+        Context->HimaxDetectSubstage = 11U;
         status = HimaxRegisterRead32(Context, HIMAX_REG_FW_STATUS, &value);
         if (!NT_SUCCESS(status)) {
             return status;
         }
+        Context->HimaxFirmwareStatus = value;
         if ((value & 0xFFU) == HIMAX_DATA_FW_SAFE_MODE) {
             status = HimaxRegisterWrite32(Context, HIMAX_REG_TCON_RESET, 0U);
             if (!NT_SUCCESS(status)) {
@@ -387,6 +398,7 @@ HimaxSenseOff(
         BarleyMtkSpiResetTouch(&Context->Spi);
     }
 
+    Context->HimaxDetectSubstage = 12U;
     return STATUS_IO_DEVICE_ERROR;
 }
 
@@ -478,6 +490,11 @@ HimaxDetectChip(
     ULONG value;
     ULONG retry;
 
+    Context->HimaxDetectSubstage = 1U;
+    Context->HimaxContinuousValue = 0xFFFFFFFFU;
+    Context->HimaxIncrementValue = 0xFFFFFFFFU;
+    Context->HimaxFirmwareStatus = 0xFFFFFFFFU;
+    Context->HimaxChipId = 0xFFFFFFFFU;
     BarleyMtkSpiResetTouch(&Context->Spi);
     status = HimaxInterfaceOn(Context);
     if (!NT_SUCCESS(status)) {
@@ -489,15 +506,19 @@ HimaxDetectChip(
     }
 
     for (retry = 0U; retry < 5U; ++retry) {
+        Context->HimaxDetectSubstage = 20U;
         status = HimaxRegisterRead32(Context, HIMAX_REG_IC_ID, &value);
         if (!NT_SUCCESS(status)) {
             return status;
         }
+        Context->HimaxChipId = value;
         if ((value & HIMAX_IC_ID_MASK) == HIMAX_IC_ID_HX83102J) {
+            Context->HimaxDetectSubstage = 21U;
             return STATUS_SUCCESS;
         }
         KeStallExecutionProcessor(1000);
     }
+    Context->HimaxDetectSubstage = 22U;
     return STATUS_DEVICE_DOES_NOT_EXIST;
 }
 

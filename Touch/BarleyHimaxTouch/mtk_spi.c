@@ -117,7 +117,7 @@ MtkSpiSourceClockFromMux(
     case 2:
         return 78000000U;
     case 3:
-        return 136500000U;
+        return 91000000U;
     default:
         return 26000000U;
     }

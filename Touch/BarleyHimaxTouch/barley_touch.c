@@ -361,6 +361,11 @@ BarleyTouchEvtD0Entry(
     BarleyWriteDiag(L"DiagHimaxInitStatus", status);
     BarleyWriteDiag(L"DiagHimaxStage", context->InitializationStage);
     BarleyWriteDiag(L"DiagHimaxStageStatus", context->InitializationStatus);
+    BarleyWriteDiag(L"DiagHimaxDetectSubstage", context->HimaxDetectSubstage);
+    BarleyWriteDiag(L"DiagHimaxContinuous", context->HimaxContinuousValue);
+    BarleyWriteDiag(L"DiagHimaxIncrement", context->HimaxIncrementValue);
+    BarleyWriteDiag(L"DiagHimaxFirmwareStatus", context->HimaxFirmwareStatus);
+    BarleyWriteDiag(L"DiagHimaxChipId", context->HimaxChipId);
     if (!NT_SUCCESS(status)) {
         BarleyHimaxReleaseFirmware(context);
         return status;

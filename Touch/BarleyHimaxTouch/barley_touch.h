@@ -82,6 +82,11 @@ typedef struct _BARLEY_TOUCH_DEVICE_CONTEXT {
     BOOLEAN HaveLastReport;
     ULONG InitializationStage;
     NTSTATUS InitializationStatus;
+    ULONG HimaxDetectSubstage;
+    ULONG HimaxContinuousValue;
+    ULONG HimaxIncrementValue;
+    ULONG HimaxFirmwareStatus;
+    ULONG HimaxChipId;
 
     PUCHAR Firmware;
     ULONG FirmwareLength;
