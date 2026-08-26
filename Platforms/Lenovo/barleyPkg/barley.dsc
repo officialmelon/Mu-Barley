@@ -92,6 +92,7 @@
 
 [Components]
   barleyPkg/Drivers/BarleyLkGopDxe/BarleyLkGopDxe.inf
+  barleyPkg/Drivers/BarleyTouchPowerDxe/BarleyTouchPowerDxe.inf
   SiliciumPkg/Drivers/KeypadDeviceDxe/KeypadDeviceDxe.inf
   SiliciumPkg/Drivers/KeypadDxe/KeypadDxe.inf
 

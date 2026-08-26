@@ -14,6 +14,7 @@ APRIORI DXE {
   INF MediaTekPkg/Drivers/ClockDxe/ClockDxe.inf
   INF MediaTekPkg/Drivers/PmicWrapperDxe/PmicWrapperDxe.inf
   INF MediaTekPkg/Drivers/MT6358PmicDxe/MT6358PmicDxe.inf
+  INF barleyPkg/Drivers/BarleyTouchPowerDxe/BarleyTouchPowerDxe.inf
   INF MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf
   INF MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf
   INF MediaTekPkg/Drivers/MsdcDxe/MsdcDxe.inf

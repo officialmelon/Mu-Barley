@@ -1,0 +1,26 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = BarleyTouchPowerDxe
+  FILE_GUID                      = 7E4A2A4E-2BE4-4D9A-BE15-2C0DA424BD4A
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = BarleyTouchPowerEntry
+
+[Sources]
+  BarleyTouchPowerDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MediaTekPkg/MediaTekPkg.dec
+
+[LibraryClasses]
+  DebugLib
+  TimerLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+
+[Protocols]
+  gMediaTekPmicProtocolGuid     ## CONSUMES
+
+[Depex]
+  gMediaTekPmicProtocolGuid
