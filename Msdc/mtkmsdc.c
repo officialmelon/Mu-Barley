@@ -297,6 +297,12 @@ MtkMsdcSetBusWidth(
     case SdBusWidth4Bit:
         EncodedWidth = MSDC_BUS_WIDTH_4;
         break;
+    case SdBusWidth8Bit:
+        if (Extension->IsEmmc == FALSE) {
+            return STATUS_NOT_SUPPORTED;
+        }
+        EncodedWidth = MSDC_BUS_WIDTH_8;
+        break;
     default:
         return STATUS_NOT_SUPPORTED;
     }
@@ -401,10 +407,6 @@ MtkMsdcIssueCommand(
 
     HasData = (Command->TransferType != SdTransferTypeNone &&
                Command->TransferType != SdTransferTypeUndefined);
-    if (HasData && Command->TransferDirection == SdTransferDirectionWrite) {
-        return STATUS_MEDIA_WRITE_PROTECTED;
-    }
-
     Status = MtkMsdcResponseEncoding(Command->ResponseType,
                                      &ResponseEncoding);
     if (!NT_SUCCESS(Status)) {
@@ -426,10 +428,6 @@ MtkMsdcIssueCommand(
         if (BlockCount == 0) {
             BlockCount = 1;
         }
-        if (BlockCount > 1) {
-            return STATUS_NOT_SUPPORTED;
-        }
-
         switch (Command->TransferType) {
         case SdTransferTypeSingleBlock:
             RawCommand |= SDC_CMD_SINGLE_BLK;
@@ -446,6 +444,9 @@ MtkMsdcIssueCommand(
         }
 
         RawCommand |= ((ULONG)Command->BlockSize << SDC_CMD_BLK_SIZE_SHIFT);
+        if (Command->TransferDirection == SdTransferDirectionWrite) {
+            RawCommand |= SDC_CMD_RW;
+        }
         MtkMsdcWrite(Extension, SDC_BLK_NUM, BlockCount);
     }
 
@@ -574,6 +575,90 @@ MtkMsdcPioRead(
     return STATUS_IO_TIMEOUT;
 }
 
+static VOID
+MtkMsdcWriteFifo(
+    _In_ PMTK_MSDC_EXTENSION Extension,
+    _In_reads_bytes_(Length) const UCHAR *Buffer,
+    _In_ ULONG Length
+    )
+{
+    ULONG Value;
+
+    while (Length >= sizeof(Value)) {
+        RtlCopyMemory(&Value, Buffer, sizeof(Value));
+        SdPortWriteRegisterUlong(Extension->BaseAddress, MSDC_TXDATA, Value);
+        Buffer += sizeof(Value);
+        Length -= sizeof(Value);
+    }
+
+    while (Length != 0) {
+        SdPortWriteRegisterUchar(Extension->BaseAddress, MSDC_TXDATA, *Buffer);
+        Buffer += 1;
+        Length -= 1;
+    }
+}
+
+static NTSTATUS
+MtkMsdcPioWrite(
+    _In_ PMTK_MSDC_EXTENSION Extension,
+    _In_reads_bytes_(Length) const UCHAR *Buffer,
+    _In_ ULONG Length
+    )
+{
+    BOOLEAN TransferComplete;
+    ULONG Available;
+    ULONG Chunk;
+    ULONG InterruptStatus;
+    ULONG Observed;
+    ULONG Poll;
+    ULONG Remaining;
+    ULONG TxCount;
+
+    if (Buffer == NULL || Length == 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    Remaining = Length;
+    TransferComplete = FALSE;
+    InterruptStatus = 0;
+
+    for (Poll = 0; Poll < MTK_MSDC_DATA_TIMEOUT_US; Poll += 1) {
+        InterruptStatus = MtkMsdcRead(Extension, MSDC_INT);
+        Observed = InterruptStatus & MSDC_INT_DATA_STATUS;
+
+        TxCount = (MtkMsdcRead(Extension, MSDC_FIFOCS) &
+                   MSDC_FIFOCS_TXCNT_MASK) >> MSDC_FIFOCS_TXCNT_SHIFT;
+        Available = (TxCount < MSDC_FIFO_SIZE) ? MSDC_FIFO_SIZE - TxCount : 0;
+        Chunk = (Remaining < Available) ? Remaining : Available;
+        if (Chunk != 0) {
+            MtkMsdcWriteFifo(Extension, Buffer, Chunk);
+            Buffer += Chunk;
+            Remaining -= Chunk;
+        }
+
+        if (Observed != 0) {
+            MtkMsdcWrite(Extension, MSDC_INT, Observed);
+        }
+        if ((Observed & (MSDC_INT_DATA_ERROR | MSDC_INT_ACMD_ERROR)) != 0) {
+            return MtkMsdcStatusFromInterrupt(Observed);
+        }
+        if ((Observed & MSDC_INT_XFER_COMPL) != 0) {
+            TransferComplete = TRUE;
+        }
+        if (TransferComplete && Remaining == 0) {
+            return STATUS_SUCCESS;
+        }
+
+        SdPortWait(1);
+    }
+
+    MTK_MSDC_LOG(DPFLTR_ERROR_LEVEL,
+                 "PIO write timed out, remaining=%lu int=%08lx\n",
+                 Remaining,
+                 InterruptStatus);
+    return STATUS_IO_TIMEOUT;
+}
+
 static NTSTATUS
 MtkMsdcStartTransfer(
     _In_ PMTK_MSDC_EXTENSION Extension,
@@ -586,24 +671,30 @@ MtkMsdcStartTransfer(
     if (Request->Command.TransferMethod != SdTransferMethodPio) {
         return STATUS_NOT_SUPPORTED;
     }
-    if (Request->Command.TransferDirection == SdTransferDirectionWrite) {
-        return STATUS_MEDIA_WRITE_PROTECTED;
-    }
-    if (Request->Command.TransferDirection != SdTransferDirectionRead) {
+    if (Request->Command.TransferDirection != SdTransferDirectionRead &&
+        Request->Command.TransferDirection != SdTransferDirectionWrite) {
         return STATUS_INVALID_PARAMETER;
     }
 
-    Length = Request->Command.BlockSize;
-    if (Length == 0 || Length > Request->Command.Length) {
-        Length = Request->Command.Length;
+    Length = Request->Command.Length;
+    if (Length == 0 && Request->Command.BlockSize != 0 &&
+        Request->Command.BlockCount != 0 &&
+        Request->Command.BlockCount <= MAXULONG / Request->Command.BlockSize) {
+        Length = Request->Command.BlockSize * Request->Command.BlockCount;
     }
-    if (Request->Command.BlockCount > 1) {
-        return STATUS_NOT_SUPPORTED;
+    if (Length == 0 || Request->Command.DataBuffer == NULL) {
+        return STATUS_INVALID_PARAMETER;
     }
 
-    Status = MtkMsdcPioRead(Extension,
-                            Request->Command.DataBuffer,
-                            Length);
+    if (Request->Command.TransferDirection == SdTransferDirectionRead) {
+        Status = MtkMsdcPioRead(Extension,
+                                Request->Command.DataBuffer,
+                                Length);
+    } else {
+        Status = MtkMsdcPioWrite(Extension,
+                                 Request->Command.DataBuffer,
+                                 Length);
+    }
     if (!NT_SUCCESS(Status)) {
         (VOID)MtkMsdcRecover(Extension);
     }
@@ -707,11 +798,20 @@ MtkMsdcInitialize(
     Extension->BaseAddress = VirtualBase;
     Extension->BaseAddressLength = Length;
     Extension->CrashdumpMode = CrashdumpMode;
+    if ((ULONGLONG)PhysicalBase.QuadPart == MTK_MSDC0_BASE) {
+        Extension->HostIndex = 0;
+        Extension->IsEmmc = TRUE;
+    } else if ((ULONGLONG)PhysicalBase.QuadPart == MTK_MSDC1_BASE) {
+        Extension->HostIndex = 1;
+        Extension->IsEmmc = FALSE;
+    } else {
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
 
     /*
-     * This source rate is the LK/UEFI-selected MT6768 MSDC1 parent observed by
-     * the working firmware path.  Production power/clock ownership will move
-     * to a separate MT6768 clock driver after this read-only proof.
+     * Both controllers inherit the 320 MHz parent selected by the proven
+     * LK/UEFI path. A future clock-controller driver can own that mux; this
+     * miniport only programs MSDC_CFG's local divider.
      */
     Extension->CurrentClockHz = 20000000;
 
@@ -720,18 +820,20 @@ MtkMsdcInitialize(
     Extension->Capabilities.SpecVersion = 3;
     Extension->Capabilities.MaximumOutstandingRequests = 1;
     Extension->Capabilities.MaximumBlockSize = 512;
-    Extension->Capabilities.MaximumBlockCount = 1;
+    Extension->Capabilities.MaximumBlockCount = MAXUSHORT;
     Extension->Capabilities.BaseClockFrequencyKhz =
         MTK_MSDC_SOURCE_CLOCK_HZ / 1000;
     Extension->Capabilities.PioTransferMaxThreshold = MAXULONG;
     Extension->Capabilities.Supported.HighSpeed = 0;
+    Extension->Capabilities.Supported.BusWidth8Bit = Extension->IsEmmc;
     Extension->Capabilities.Supported.DriverTypeB = 1;
     Extension->Capabilities.Supported.Voltage33V = 1;
     Extension->Capabilities.Supported.Limit200mA = 1;
+    Extension->Capabilities.Supported.AutoCmd12 = 1;
     Extension->Capabilities.Flags.UsePioForRead = 1;
     Extension->Capabilities.Flags.UsePioForWrite = 1;
 
-    /* Keep the inherited clock tree, rail, pinmux, and MSDC-TOP state. */
+    /* Keep the inherited clock tree, rails, pinmux, and MSDC-TOP state. */
     MtkMsdcSetBits(Extension,
                    MSDC_CFG,
                    MSDC_CFG_MODE | MSDC_CFG_CKPD | MSDC_CFG_PIO);
@@ -842,11 +944,17 @@ MtkMsdcGetCardDetectState(
     PVOID PrivateExtension
     )
 {
-    UNREFERENCED_PARAMETER(PrivateExtension);
+    PMTK_MSDC_EXTENSION Extension;
+
+    Extension = (PMTK_MSDC_EXTENSION)PrivateExtension;
+    if (Extension == NULL) {
+        return FALSE;
+    }
 
     /*
-     * Host1 uses external GPIO18, not MSDC_PS.CDSTS.  Until GpioClx support is
-     * present, this diagnostic package is intentionally for an inserted card.
+     * MSDC0 is soldered eMMC. MSDC1 uses external GPIO18 rather than
+     * MSDC_PS.CDSTS; until GpioClx support lands, the removable controller is
+     * intentionally used with a card present at boot.
      */
     return TRUE;
 }
@@ -857,8 +965,7 @@ MtkMsdcGetWriteProtectState(
     PVOID PrivateExtension
     )
 {
-    UNREFERENCED_PARAMETER(PrivateExtension);
-    return TRUE;
+    return PrivateExtension == NULL ? TRUE : FALSE;
 }
 
 _Use_decl_annotations_
@@ -1093,4 +1200,3 @@ MtkMsdcCleanup(
 {
     UNREFERENCED_PARAMETER(Miniport);
 }
-

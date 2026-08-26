@@ -1,99 +1,69 @@
-# MT6768 MSDC Windows driver bring-up
+# MediaTek MT6768 MSDC Windows miniport
 
-This directory is intentionally separate from Mu-Silicium.  It contains the
-Windows runtime storage work needed after `ExitBootServices()`; it does not
-change the UEFI SD/MMC driver or any boot media.
+This directory contains the Windows runtime storage driver for Lenovo Barley.
+It is separate from Mu-Silicium because UEFI block I/O stops at
+`ExitBootServices()`.
 
-## Architecture
+`mtkmsdc.sys` is an ARM64 SDPORT host-controller miniport for MediaTek's
+vendor-specific MSDC register interface. MSDC is not SDHCI-compatible and is
+therefore exposed through the vendor ACPI ID `MTK6768`, never `PNP0D40`.
 
-`mtkmsdc.sys` is a vendor-specific SDPORT host-controller miniport for the
-MediaTek MT6768 MSDC register block.  It is **not** an SDA/SDHCI controller and
-must not be described as `PNP0D40`.
+## Barley controllers
 
-The first diagnostic target is only the removable microSD controller:
+| ACPI device | Medium | Main MMIO | GSI | Width | Removal |
+| --- | --- | --- | --- | --- | --- |
+| `MSD0` / UID 0 | soldered eMMC | `0x11230000 + 0x10000` | 132 | 8-bit capable | fixed |
+| `MSD1` / UID 1 | microSD | `0x11240000 + 0x10000` | 133 | 4-bit | removable |
 
-| Item | Barley value |
-| --- | --- |
-| ACPI hardware ID | `ACPI\MTK6768` |
-| MSDC host | 1 |
-| Controller MMIO | `0x11240000`, length `0x10000` |
-| GIC interrupt | GSI 133, level/high |
-| Bus width | 4-bit |
-| Maximum diagnostic clock | 25 MHz requested |
-| Data path | PIO, one block at a time |
-| Media policy | reported write-protected |
+One signed package binds to both instances. The miniport distinguishes them by
+their translated physical register resource. It implements command/response
+handling, reset and recovery, clock division, 1/4/8-bit bus widths, multi-block
+PIO reads and writes, Auto CMD12, and SDPORT power/bus callbacks. The initial
+clock policy deliberately stays at normal speed (25 MHz maximum); high-speed,
+HS200 and UHS tuning are deferred until baseline I/O is measured on hardware.
 
-The diagnostic miniport deliberately exposes no eMMC device and rejects every
-data-write request with `STATUS_MEDIA_WRITE_PROTECTED`.  This allows Windows
-Setup to prove that its post-UEFI storage stack can enumerate and read the SD
-card without risking the Android GPT or either boot slot.
+## Hardware ownership contract
 
-## What is implemented
+The first Windows version preserves the working state left by Lenovo LK and
+Mu-Silicium: source clocks, controller gates, PMIC rails, pinmux and MSDC-TOP
+tuning remain enabled across `ExitBootServices()`. The miniport owns the main
+MSDC window and its local clock divider only. This is the smallest correct
+bring-up boundary and matches the currently proven UEFI storage path.
 
-- ARM64-only WDM/SDPORT project and INF.
-- Vendor ACPI binding (`MTK6768`), with no false `PNP0D40` compatible ID.
-- SDPORT callback table based on Microsoft's standard SDHC sample.
-- MT6768 command encoding, response capture, reset, FIFO handling, clock
-  divider, bus width, interrupt decoding, and synchronous PIO reads based on
-  Mu-Silicium's proven `MsdcDxe` implementation.
-- A host1-only ACPI SSDT fragment.
-- Hard read-only policy and a one-request/one-block capability limit.
+MSDC1 card detect is wired to external GPIO18, not `MSDC_PS.CDSTS`. Until the
+MT6768 GPIO/GpioClx driver exists, MSDC1 reports the card inserted and is tested
+with the card present at boot. MSDC0 is permanently present. Neither controller
+is falsely reported write-protected.
 
-## Intentional first-test limitations
+## Build
 
-This is a concrete bring-up implementation, not yet a production driver:
-
-1. The slot rail, top clock gates, pinmux, and MSDC-TOP tuning are inherited
-   from LK/UEFI.  The current UEFI driver leaves them enabled at
-   `ExitBootServices()`.  Resume, cold Windows restart, voltage switching, and
-   hot-plug therefore remain unsupported.
-2. Barley uses external GPIO18 card detect.  Until a Windows MT6768 GPIO driver
-   exists, this host1-only build reports the already-inserted card as present.
-3. The port uses synchronous polled completion and limits transfers to one
-   block.  Interrupt-driven completion and multi-block I/O are the next step
-   after enumeration is proven.
-4. Writes are disabled by design.  Do not use this build as an installer target.
-5. `CrashdumpSupported` is false.  Hibernation/crash-dump storage is not yet
-   claimed.
-
-## Build prerequisites
-
-Install Visual Studio with the ARM64 C++ tools and the Windows 11 WDK.  The
-plain Windows SDK is insufficient: the project requires `sdport.h` and
-`sdport.lib` from the kernel-mode WDK.
-
-Build from a Developer PowerShell:
+The reproducible build uses the checked local WDK NuGet package and the
+installed ARM64 MSVC tools:
 
 ```powershell
-msbuild .\mtkmsdc.vcxproj /m /p:Configuration=Debug /p:Platform=ARM64
+.\Build-Arm64.ps1 -Configuration Release -SigningThumbprint <SHA1>
 ```
 
-The currently installed host SDK was audited as lacking the WDK `km` include
-and library trees.  Microsoft's official ARM64 WDK 26100 package does contain:
+The output package is `out/ARM64/Release/package`. `Inf2Cat` validates the INF,
+and the script emits PE headers and SHA-256 hashes.
 
-- `Include/10.0.26100.0/km/sdport.h`
-- `Lib/10.0.26100.0/km/ARM64/sdport.lib`
+## Current scope and next validation
 
-## Safe first runtime test
+The data path is conservative synchronous polling with one outstanding SDPORT
+request and no DMA. This is intentional for first hardware enumeration and is
+functionally sufficient for Setup, though slower than the eventual interrupt +
+DMA path. Crash-dump/hibernation support, cold power ownership, resume, live
+card removal, voltage switching and tuned high-speed modes are not claimed yet.
 
-After the driver compiles and is test-signed, the controlled test is:
+The controlled first test is read enumeration of both disks in WinPE, followed
+by a small write/read/flush test on a disposable file on the microSD filesystem.
+No automated test writes the eMMC or changes its GPT. Windows Setup writes only
+after the user explicitly selects and confirms a destination.
 
-1. Add only the host1 ACPI node to a test firmware.
-2. Inject the signed package into both WinPE/Setup indexes of `boot.wim`.
-3. Leave host0/eMMC absent from ACPI.
-4. Boot WinPE and confirm that one read-only SD disk appears in Setup or
-   `diskpart list disk`.
-5. Capture SetupAPI and kernel debug logs before enabling writes.
+## References
 
-Do not inject or deploy this skeleton until it builds cleanly and its signing
-policy is decided.  Nothing in this directory performs deployment.
-
-## Primary references
-
-- [Microsoft standard SD host-controller miniport sample](https://github.com/microsoft/Windows-driver-samples/tree/main/sd/miniport/sdhc)
-- [Microsoft SDPORT initialization DDI](https://learn.microsoft.com/en-us/previous-versions/mt715818%28v%3Dvs.85%29)
-- [Microsoft ACPI requirements for SoC SD controllers](https://learn.microsoft.com/en-us/windows-hardware/drivers/bringup/other-acpi-namespace-objects#sd-host-controllers-and-devices)
-- [Linux MediaTek MMC host driver](https://github.com/torvalds/linux/blob/master/drivers/mmc/host/mtk-sd.c)
-- Mu-Silicium source: `Silicon/MediaTek/MediaTekPkg/Drivers/MsdcDxe/`
-- Mu-Silicium source: `Silicon/MediaTek/MT6768Pkg/Library/MsdcImplLib/`
-
+- Microsoft Windows driver samples: `sd/miniport/sdhc`
+- Microsoft SDPORT and SoC ACPI documentation
+- Linux `drivers/mmc/host/mtk-sd.c`
+- Mu-Silicium `MediaTekPkg/Drivers/MsdcDxe`
+- Mu-Silicium `MT6768Pkg/Library/MsdcImplLib`

@@ -12,6 +12,8 @@ typedef struct _MTK_MSDC_EXTENSION {
     ULONG CurrentClockHz;
     ULONG Response[4];
     SDPORT_CAPABILITIES Capabilities;
+    ULONG HostIndex;
+    BOOLEAN IsEmmc;
     BOOLEAN CrashdumpMode;
 } MTK_MSDC_EXTENSION, *PMTK_MSDC_EXTENSION;
 
@@ -33,4 +35,3 @@ SDPORT_SAVE_CONTEXT MtkMsdcSaveContext;
 SDPORT_RESTORE_CONTEXT MtkMsdcRestoreContext;
 SDPORT_PO_FX_POWER_CONTROL_CALLBACK MtkMsdcPowerControl;
 SDPORT_CLEANUP MtkMsdcCleanup;
-
