@@ -56,9 +56,6 @@
 #define MTK_INFRA_CG1_STATUS         0x0094U
 #define MTK_INFRA_SPI0_GATE_BIT      (1U << 1)
 
-#define MTK_GPIO_SPI_MODE_OFFSET     0x0430U
-#define MTK_GPIO_SPI_MODE_MASK       0x0FFFF000U
-#define MTK_GPIO_SPI_MODE_1          0x01111000U
 #define MTK_GPIO_RST_MODE_OFFSET     0x03B0U
 #define MTK_GPIO_RST_MODE_MASK       (0xFU << 16)
 #define MTK_GPIO_RST_DIR_OFFSET      0x0020U
@@ -124,17 +121,11 @@ MtkSpiSourceClockFromMux(
 }
 
 static VOID
-MtkConfigurePinMuxAndResetOutput(
+MtkConfigureResetOutputOnly(
     _Inout_ PBARLEY_MTK_SPI Spi
     )
 {
     ULONG value;
-
-    /* GPIO155..158 function 1: SPI0_MI/CSB/MO/CLK. */
-    value = MtkRead32(Spi->Gpio, MTK_GPIO_SPI_MODE_OFFSET);
-    value &= ~MTK_GPIO_SPI_MODE_MASK;
-    value |= MTK_GPIO_SPI_MODE_1;
-    MtkWrite32(Spi->Gpio, MTK_GPIO_SPI_MODE_OFFSET, value);
 
     /* GPIO92 function 0, output, deasserted high. */
     value = MtkRead32(Spi->Gpio, MTK_GPIO_RST_MODE_OFFSET);
@@ -180,7 +171,8 @@ BarleyMtkSpiInitialize(
         return STATUS_DEVICE_POWER_FAILURE;
     }
 
-    MtkConfigurePinMuxAndResetOutput(Spi);
+    /* Preserve Lenovo LK's live SPI pinmux; only configure FDT-confirmed reset GPIO92. */
+    MtkConfigureResetOutputOnly(Spi);
     Spi->SourceClockHz = MtkSpiSourceClockFromMux(Spi);
 
     MtkSpiControllerReset(Spi);
