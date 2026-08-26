@@ -45,6 +45,13 @@ typedef struct _BARLEY_MTK_SPI {
     PUCHAR Gpio;
     ULONG GpioLength;
     ULONG SourceClockHz;
+    ULONG Config0;
+    ULONG Config1;
+    ULONG Config2;
+    ULONG Command;
+    ULONG PadSelect;
+    ULONG ResetDataOut;
+    ULONG LastReceiveWord;
 } BARLEY_MTK_SPI, *PBARLEY_MTK_SPI;
 
 #pragma pack(push, 1)

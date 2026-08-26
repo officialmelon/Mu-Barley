@@ -7,7 +7,7 @@ The hardware contract is derived from Lenovo's live device tree and stock
 Android driver rather than from a fabricated HID-over-I2C device:
 
 - HX83102J zero-flash controller (`himax,hxcommon`)
-- MT6768 SPI0, chip select 0, SPI mode 1, maximum 10 MHz
+- MT6768 SPI0, chip select 0, SPI mode 3, maximum 10 MHz
 - reset GPIO 92
 - native coordinates 0..11999 by 0..19199
 - ten native contact slots

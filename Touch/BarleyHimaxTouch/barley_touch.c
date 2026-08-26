@@ -348,6 +348,13 @@ BarleyTouchEvtD0Entry(
 
     status = BarleyMtkSpiInitialize(&context->Spi);
     BarleyWriteDiag(L"DiagSpiInitStatus", status);
+    BarleyWriteDiag(L"DiagSpiSourceClockHz", context->Spi.SourceClockHz);
+    BarleyWriteDiag(L"DiagSpiConfig0", context->Spi.Config0);
+    BarleyWriteDiag(L"DiagSpiConfig1", context->Spi.Config1);
+    BarleyWriteDiag(L"DiagSpiConfig2", context->Spi.Config2);
+    BarleyWriteDiag(L"DiagSpiCommand", context->Spi.Command);
+    BarleyWriteDiag(L"DiagSpiPadSelect", context->Spi.PadSelect);
+    BarleyWriteDiag(L"DiagHimaxResetDataOut", context->Spi.ResetDataOut);
     if (!NT_SUCCESS(status)) {
         context->InitializationStage = 0x100U;
         context->InitializationStatus = status;
@@ -366,6 +373,8 @@ BarleyTouchEvtD0Entry(
     BarleyWriteDiag(L"DiagHimaxIncrement", context->HimaxIncrementValue);
     BarleyWriteDiag(L"DiagHimaxFirmwareStatus", context->HimaxFirmwareStatus);
     BarleyWriteDiag(L"DiagHimaxChipId", context->HimaxChipId);
+    BarleyWriteDiag(L"DiagSpiLastReceiveWord", context->Spi.LastReceiveWord);
+    BarleyWriteDiag(L"DiagHimaxResetDataOut", context->Spi.ResetDataOut);
     if (!NT_SUCCESS(status)) {
         BarleyHimaxReleaseFirmware(context);
         return status;

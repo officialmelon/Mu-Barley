@@ -127,7 +127,11 @@ MtkConfigureResetOutputOnly(
 {
     ULONG value;
 
-    /* GPIO92 function 0, output, deasserted high. */
+    /*
+     * Lenovo's running Android driver exposes GPIO92 as "himax-reset out hi".
+     * Program the deasserted level before enabling output to avoid a spurious
+     * reset edge.
+     */
     value = MtkRead32(Spi->Gpio, MTK_GPIO_RST_MODE_OFFSET);
     value &= ~MTK_GPIO_RST_MODE_MASK;
     MtkWrite32(Spi->Gpio, MTK_GPIO_RST_MODE_OFFSET, value);
@@ -185,7 +189,9 @@ BarleyMtkSpiInitialize(
                  MTK_SPI_CMD_TX_DMA | MTK_SPI_CMD_RX_ENDIAN |
                  MTK_SPI_CMD_TX_ENDIAN | MTK_SPI_CMD_FINISH_IE |
                  MTK_SPI_CMD_PAUSE_IE);
-    command |= MTK_SPI_CMD_CPHA | MTK_SPI_CMD_TXMSBF | MTK_SPI_CMD_RXMSBF;
+    /* Lenovo himax_mmi.ko explicitly programs SPI mode 3 and 8-bit words. */
+    command |= MTK_SPI_CMD_CPOL | MTK_SPI_CMD_CPHA |
+               MTK_SPI_CMD_TXMSBF | MTK_SPI_CMD_RXMSBF;
     MtkWrite32(Spi->Registers, MTK_SPI_CMD, command);
     MtkWrite32(Spi->Registers, MTK_SPI_PAD_SEL, 0U);
 
@@ -202,6 +208,14 @@ BarleyMtkSpiInitialize(
            (((halfPeriod - 1U) & 0xFFFFU) << 16);
     MtkWrite32(Spi->Registers, MTK_SPI_CFG2, cfg2);
 
+    Spi->Config0 = MtkRead32(Spi->Registers, MTK_SPI_CFG0);
+    Spi->Config1 = MtkRead32(Spi->Registers, MTK_SPI_CFG1);
+    Spi->Config2 = MtkRead32(Spi->Registers, MTK_SPI_CFG2);
+    Spi->Command = MtkRead32(Spi->Registers, MTK_SPI_CMD);
+    Spi->PadSelect = MtkRead32(Spi->Registers, MTK_SPI_PAD_SEL);
+    Spi->ResetDataOut = MtkRead32(Spi->Gpio, MTK_GPIO_RST_DOUT_OFFSET);
+    Spi->LastReceiveWord = 0U;
+
     return STATUS_SUCCESS;
 }
 
@@ -216,16 +230,18 @@ BarleyMtkSpiResetTouch(
         return;
     }
 
+    /* Match Lenovo himax_mmi.ko: raw-low pulse for 2 ms, then raw-high. */
     value = MtkRead32(Spi->Gpio, MTK_GPIO_RST_DOUT_OFFSET);
     value &= ~MTK_GPIO_RST_BIT;
     MtkWrite32(Spi->Gpio, MTK_GPIO_RST_DOUT_OFFSET, value);
     KeMemoryBarrier();
-    KeStallExecutionProcessor(20000);
+    KeStallExecutionProcessor(2000);
 
     value |= MTK_GPIO_RST_BIT;
     MtkWrite32(Spi->Gpio, MTK_GPIO_RST_DOUT_OFFSET, value);
     KeMemoryBarrier();
-    KeStallExecutionProcessor(20000);
+    KeStallExecutionProcessor(1100);
+    Spi->ResetDataOut = MtkRead32(Spi->Gpio, MTK_GPIO_RST_DOUT_OFFSET);
 }
 
 NTSTATUS
@@ -252,6 +268,7 @@ BarleyMtkSpiTransfer(
         return STATUS_INVALID_PARAMETER;
     }
 
+    Spi->LastReceiveWord = 0U;
     MtkSpiControllerReset(Spi);
     command = MtkRead32(Spi->Registers, MTK_SPI_CMD);
     command &= ~(MTK_SPI_CMD_ACT | MTK_SPI_CMD_RESUME |
@@ -326,5 +343,9 @@ BarleyMtkSpiTransfer(
     command &= ~(MTK_SPI_CMD_PAUSE_EN | MTK_SPI_CMD_ACT | MTK_SPI_CMD_RESUME);
     MtkWrite32(Spi->Registers, MTK_SPI_CMD, command);
     MtkSpiControllerReset(Spi);
+    if (Receive != NULL) {
+        RtlCopyMemory(&Spi->LastReceiveWord, Receive,
+                      (Length < sizeof(ULONG)) ? Length : sizeof(ULONG));
+    }
     return STATUS_SUCCESS;
 }
