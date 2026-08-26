@@ -46,6 +46,7 @@ $Compile = @(
     '/guard:cf', '/volatile:iso', '/Zp8',
     '/D_ARM64_', '/DARM64', '/D_WIN64',
     '/DUNICODE', '/D_UNICODE', '/DPOOL_NX_OPTIN=1',
+    "/DKMDF_VERSION_MAJOR=1", "/DKMDF_VERSION_MINOR=33",
     '/DNTDDI_VERSION=0x0A00000C', '/D_WIN32_WINNT=0x0A00',
     "/I$KmInclude", "/I$SharedInclude", "/I$UcrtInclude", "/I$WdfInclude", "/I$MsvcInclude",
     (Join-Path $ProjectDir 'barley_input.c'),

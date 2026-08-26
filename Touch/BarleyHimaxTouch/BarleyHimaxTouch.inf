@@ -3,7 +3,7 @@ Signature="$WINDOWS NT$"
 Class=System
 ClassGuid={4D36E97D-E325-11CE-BFC1-08002BE10318}
 Provider=%Provider%
-DriverVer=08/26/2026,0.1.1.0
+DriverVer=08/26/2026,0.1.2.0
 CatalogFile=BarleyHimaxTouch.cat
 PnpLockdown=1
 
