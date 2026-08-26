@@ -100,5 +100,46 @@ DefinitionBlock ("", "DSDT", 2, "LENOVO", "BARLEY", 1)
 
             Method (_STA, 0, NotSerialized) { Return (0x0F) }
         }
+
+        // MT6768 MSDC is a vendor controller, not an SDHCI-compatible device.
+        // The shared MTK6768 SDPORT miniport identifies the soldered eMMC and
+        // removable microSD instances from their translated MMIO resources.
+        Device (MSD0)
+        {
+            Name (_HID, "MTK6768")
+            Name (_UID, 0)
+            Name (_DDN, "MediaTek MT6768 eMMC host")
+            Name (_CCA, One)
+            Name (_RMV, Zero)
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x11230000, 0x00010000)
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive)
+                {
+                    132
+                }
+            })
+
+            Method (_STA, 0, NotSerialized) { Return (0x0F) }
+        }
+
+        Device (MSD1)
+        {
+            Name (_HID, "MTK6768")
+            Name (_UID, 1)
+            Name (_DDN, "MediaTek MT6768 microSD host")
+            Name (_CCA, One)
+            Name (_RMV, One)
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x11240000, 0x00010000)
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive)
+                {
+                    133
+                }
+            })
+
+            Method (_STA, 0, NotSerialized) { Return (0x0F) }
+        }
     }
 }
