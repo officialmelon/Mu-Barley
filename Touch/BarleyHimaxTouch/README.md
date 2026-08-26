@@ -41,6 +41,9 @@ test package by `Build-Arm64.ps1` and is not part of the portable source.
 .\Build-Arm64.ps1 -Configuration Release
 ```
 
+The build uses the Microsoft Visual C++ ARM64 compiler and linker together
+with the KMDF 1.33 headers and libraries from the local ARM64 WDK package.
+
 The script validates the exact stock firmware size and SHA-256, builds an
 ARM64 KMDF driver with the installed WDK libraries, links `vhfkm.lib`, and
 runs `Inf2Cat` over the complete package.

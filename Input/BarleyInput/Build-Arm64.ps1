@@ -4,14 +4,7 @@ param(
     [string]$Configuration = 'Release',
 
     [ValidatePattern('^[0-9A-Fa-f]{40}$')]
-    [string]$SigningThumbprint = '',
-
-    [switch]$NoCfg,
-
-    [switch]$DefaultBase,
-
-    [ValidateSet('lld', 'ms')]
-    [string]$Linker = 'lld'
+    [string]$SigningThumbprint = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,22 +14,17 @@ $Workspace = Resolve-Path (Join-Path $ProjectDir '..\..\..')
 $Wdk = Join-Path $Workspace 'Tools\WDK-NuGet\10.0.26100.6584-arm64'
 $KitVersion = '10.0.26100.0'
 $KmdfVersion = '1.33'
-$ClangCl = (Get-Command clang -ErrorAction Stop).Source
-$LldLink = (Get-Command lld-link -ErrorAction Stop).Source
-if ($Linker -eq 'ms') {
-    $MsLink = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\*\bin\Hostx64\arm64\link.exe' |
-        Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
-    if (-not $MsLink) { throw 'MSVC arm64 link.exe was not found' }
-    $LinkTool = $MsLink
-} else {
-    $LinkTool = $LldLink
+$MsvcToolsRoot = 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC'
+$MsvcTools = Get-ChildItem -LiteralPath $MsvcToolsRoot -Directory |
+    Sort-Object Name -Descending | Select-Object -First 1
+if ($null -eq $MsvcTools) { throw 'Microsoft Visual C++ tools were not found' }
+$Compiler = Join-Path $MsvcTools.FullName 'bin\Hostx64\arm64\cl.exe'
+$Linker = Join-Path $MsvcTools.FullName 'bin\Hostx64\arm64\link.exe'
+if (-not (Test-Path -LiteralPath $Compiler)) {
+    throw "Microsoft ARM64 compiler was not found at $Compiler"
 }
-
-if (-not (Test-Path -LiteralPath $ClangCl)) {
-    throw "clang-cl was not found at $ClangCl"
-}
-if (-not (Test-Path -LiteralPath $LldLink)) {
-    throw "lld-link was not found at $LldLink"
+if (-not (Test-Path -LiteralPath $Linker)) {
+    throw "Microsoft ARM64 linker was not found at $Linker"
 }
 
 $OutDir = Join-Path $ProjectDir "out\ARM64\$Configuration"
@@ -47,41 +35,19 @@ $InstalledSdkInclude = "C:\Program Files (x86)\Windows Kits\10\Include\$KitVersi
 $SharedInclude = Join-Path $InstalledSdkInclude 'shared'
 $UcrtInclude = Join-Path $InstalledSdkInclude 'ucrt'
 $WdfInclude = Join-Path $Wdk "c\Include\wdf\kmdf\$KmdfVersion"
-$MsvcToolsRoot = 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC'
-$MsvcInclude = Join-Path (
-    Get-ChildItem -LiteralPath $MsvcToolsRoot -Directory |
-        Sort-Object Name -Descending |
-        Select-Object -First 1 -ExpandProperty FullName
-) 'include'
+$MsvcInclude = Join-Path $MsvcTools.FullName 'include'
 $KmLib = Join-Path $Wdk "c\Lib\$KitVersion\km\ARM64"
 $WdfLib = Join-Path $Wdk "c\Lib\wdf\kmdf\ARM64\$KmdfVersion"
 $Object = Join-Path $OutDir 'barley_input.obj'
 $Driver = Join-Path $OutDir 'BarleyInput.sys'
 
-# WDK 26100's ARM64 wdm.h uses MSVC's legacy empty-token-paste extension in
-# one macro (`&##_variable`). Clang correctly rejects that token paste. Create
-# a derived compatibility header in the output tree; never alter the WDK.
-$CompatInclude = Join-Path $OutDir 'generated-include'
-New-Item -ItemType Directory -Force -Path $CompatInclude | Out-Null
-$WdmSource = Join-Path $KmInclude 'wdm.h'
-$WdmText = [IO.File]::ReadAllText($WdmSource)
-$WdmCompatText = $WdmText.Replace('&##_variable', '&_variable')
-if ($WdmCompatText -eq $WdmText) {
-    throw 'Expected WDK ARM64 token-paste construct was not found in wdm.h'
-}
-[IO.File]::WriteAllText(
-    (Join-Path $CompatInclude 'wdm.h'),
-    $WdmCompatText,
-    [Text.UTF8Encoding]::new($false))
-
 $Compile = @(
-    '--driver-mode=cl',
-    '--target=arm64-pc-windows-msvc',
     '/nologo', '/c', '/kernel', '/Zl', '/GS', '/Gy', '/Oi', '/W4',
-    '/D_ARM64_', '/DARM64', '/D_WIN64', '/D_KERNEL_MODE',
+    '/guard:cf', '/volatile:iso', '/Zp8',
+    '/D_ARM64_', '/DARM64', '/D_WIN64',
     '/DUNICODE', '/D_UNICODE', '/DPOOL_NX_OPTIN=1',
     '/DNTDDI_VERSION=0x0A00000C', '/D_WIN32_WINNT=0x0A00',
-    "/I$CompatInclude", "/I$KmInclude", "/I$SharedInclude", "/I$UcrtInclude", "/I$WdfInclude", "/I$MsvcInclude",
+    "/I$KmInclude", "/I$SharedInclude", "/I$UcrtInclude", "/I$WdfInclude", "/I$MsvcInclude",
     (Join-Path $ProjectDir 'barley_input.c'),
     "/Fo$Object"
 )
@@ -91,19 +57,16 @@ if ($Configuration -eq 'Debug') {
     $Compile += @('/O2')
 }
 
-& $ClangCl @Compile
-if ($LASTEXITCODE -ne 0) { throw "clang-cl failed with exit code $LASTEXITCODE" }
+& $Compiler @Compile
+if ($LASTEXITCODE -ne 0) { throw "cl.exe failed with exit code $LASTEXITCODE" }
 
 $Link = @(
     '/nologo', '/driver', '/release', '/Brepro', '/subsystem:native,6.2', '/osversion:10.0', '/stack:0x40000,0x1000', '/machine:arm64',
     '/entry:FxDriverEntry', '/nodefaultlib',
     "/out:$Driver"
 )
-if (-not $DefaultBase) { $Link += '/base:0x1C0000000' }
-$Link += $(if ($NoCfg) { '/GUARD:NO' } else { '/guard:cf' })
-if ($Linker -eq 'ms') {
-    $Link += @('/incremental:no', '/opt:ref', '/opt:icf', '/dynamicbase', '/nxcompat')
-}
+$Link += @('/base:0x1C0000000', '/guard:cf', '/incremental:no',
+    '/opt:ref', '/opt:icf', '/dynamicbase', '/nxcompat')
 $Link = $Link + @($Object,
     "/libpath:$KmLib", "/libpath:$WdfLib",
     'wdfdriverentry.lib', 'wdfldr.lib', 'ntoskrnl.lib', 'hal.lib',
@@ -113,7 +76,7 @@ if ($Configuration -eq 'Debug') {
     $Link += @('/debug', "/pdb:$(Join-Path $OutDir 'BarleyInput.pdb')")
 }
 
-& $LinkTool @Link
+& $Linker @Link
 if ($LASTEXITCODE -ne 0) { throw "link failed with exit code $LASTEXITCODE" }
 
 $SignTool = "C:\Program Files (x86)\Windows Kits\10\bin\$KitVersion\x64\signtool.exe"
@@ -130,6 +93,9 @@ if (-not [string]::IsNullOrWhiteSpace($SigningThumbprint)) {
 Copy-Item -LiteralPath (Join-Path $ProjectDir 'BarleyInput.inf') -Destination $OutDir -Force
 
 $PackageDir = Join-Path $OutDir 'package'
+if (Test-Path -LiteralPath $PackageDir) {
+    Remove-Item -LiteralPath $PackageDir -Recurse -Force
+}
 New-Item -ItemType Directory -Force -Path $PackageDir | Out-Null
 Copy-Item -LiteralPath $Driver -Destination $PackageDir -Force
 Copy-Item -LiteralPath (Join-Path $ProjectDir 'BarleyInput.inf') -Destination $PackageDir -Force

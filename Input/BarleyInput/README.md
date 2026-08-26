@@ -47,7 +47,7 @@ cd C:\Users\braxt\TB330XU\Barley-Windows-Drivers\Input\BarleyInput
 ```
 
 The script uses the locally unpacked Microsoft ARM64 WDK NuGet package and the
-available LLVM `clang-cl`/`lld-link` toolchain. Output is under
+native Microsoft Visual C++ ARM64 `cl.exe`/`link.exe` toolchain. Output is under
 `out\ARM64\Release`; the INF/SYS/CAT set is in its `package` subdirectory.
 The script runs `Inf2Cat`, prints the PE/COFF machine, and hashes the driver
 and catalog.
