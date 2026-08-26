@@ -14,6 +14,12 @@
 #define BARLEY_TOUCH_VID 0x17EFU
 #define BARLEY_TOUCH_PID 0x330CU
 
+static VOID
+BarleyWriteDiag(
+    _In_ PCWSTR ValueName,
+    ULONG Status
+    );
+
 /*
  * One fixed parallel contact record.  Windows requires Tip Switch, Contact
  * Identifier, X, Y, frame Contact Count, and Contact Count Maximum.  In Range
@@ -243,6 +249,8 @@ BarleyTouchEvtPrepareHardware(
     context = BarleyTouchGetContext(Device);
     memoryIndex = 0U;
     count = WdfCmResourceListGetCount(ResourcesTranslated);
+    BarleyWriteDiag(L"DiagPrepareEntered", 0U);
+    BarleyWriteDiag(L"DiagResourceCount", count);
 
     for (index = 0U; index < count; ++index) {
         descriptor = WdfCmResourceListGetDescriptor(
@@ -282,6 +290,7 @@ BarleyTouchEvtPrepareHardware(
             break;
         }
         if (!NT_SUCCESS(status)) {
+            BarleyWriteDiag(L"DiagPrepareStatus", status);
             BarleyTouchUnmapResources(context);
             return status;
         }
@@ -291,10 +300,16 @@ BarleyTouchEvtPrepareHardware(
     if (memoryIndex != BarleyTouchResourceCount ||
         context->Spi.Registers == NULL || context->Spi.TopCkgen == NULL ||
         context->Spi.InfraCfg == NULL || context->Spi.Gpio == NULL) {
+        BarleyWriteDiag(L"DiagMemoryCount", memoryIndex);
+        BarleyWriteDiag(
+            L"DiagPrepareStatus",
+            STATUS_DEVICE_CONFIGURATION_ERROR);
         BarleyTouchUnmapResources(context);
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
 
+    BarleyWriteDiag(L"DiagMemoryCount", memoryIndex);
+    BarleyWriteDiag(L"DiagPrepareStatus", STATUS_SUCCESS);
     return STATUS_SUCCESS;
 }
 
@@ -325,12 +340,14 @@ BarleyTouchEvtD0Entry(
 
     UNREFERENCED_PARAMETER(PreviousState);
     context = BarleyTouchGetContext(Device);
+    BarleyWriteDiag(L"DiagD0Entered", 0U);
     context->HardwareReady = FALSE;
     context->HaveLastReport = FALSE;
     RtlZeroMemory(&context->CurrentReport, sizeof(context->CurrentReport));
     RtlZeroMemory(&context->LastReport, sizeof(context->LastReport));
 
     status = BarleyMtkSpiInitialize(&context->Spi);
+    BarleyWriteDiag(L"DiagSpiInitStatus", status);
     if (!NT_SUCCESS(status)) {
         context->InitializationStage = 0x100U;
         context->InitializationStatus = status;
@@ -341,6 +358,9 @@ BarleyTouchEvtD0Entry(
     }
 
     status = BarleyHimaxInitialize(context);
+    BarleyWriteDiag(L"DiagHimaxInitStatus", status);
+    BarleyWriteDiag(L"DiagHimaxStage", context->InitializationStage);
+    BarleyWriteDiag(L"DiagHimaxStageStatus", context->InitializationStatus);
     if (!NT_SUCCESS(status)) {
         BarleyHimaxReleaseFirmware(context);
         return status;
@@ -421,6 +441,7 @@ BarleyTouchEvtDeviceAdd(
     VHF_CONFIG vhfConfig;
 
     UNREFERENCED_PARAMETER(Driver);
+    BarleyWriteDiag(L"DiagDeviceAddEntered", 0U);
 
     WDF_PNPPOWER_EVENT_CALLBACKS_INIT(&pnpPowerCallbacks);
     pnpPowerCallbacks.EvtDevicePrepareHardware =
@@ -438,6 +459,7 @@ BarleyTouchEvtDeviceAdd(
     attributes.ExecutionLevel = WdfExecutionLevelPassive;
     attributes.SynchronizationScope = WdfSynchronizationScopeDevice;
     status = WdfDeviceCreate(&DeviceInit, &attributes, &device);
+    BarleyWriteDiag(L"DiagDeviceCreateStatus", status);
     if (!NT_SUCCESS(status)) {
         return status;
     }
@@ -445,6 +467,7 @@ BarleyTouchEvtDeviceAdd(
     context = BarleyTouchGetContext(device);
     context->Device = device;
     status = BarleyTouchCreateTimer(device);
+    BarleyWriteDiag(L"DiagTimerCreateStatus", status);
     if (!NT_SUCCESS(status)) {
         return status;
     }
@@ -462,16 +485,19 @@ BarleyTouchEvtDeviceAdd(
         BarleyTouchEvtVhfGetFeature;
 
     status = VhfCreate(&vhfConfig, &context->VhfHandle);
+    BarleyWriteDiag(L"DiagVhfCreateStatus", status);
     if (!NT_SUCCESS(status)) {
         return status;
     }
     status = VhfStart(context->VhfHandle);
+    BarleyWriteDiag(L"DiagVhfStartStatus", status);
     if (!NT_SUCCESS(status)) {
         VhfDelete(context->VhfHandle, TRUE);
         context->VhfHandle = NULL;
         return status;
     }
     context->VhfStarted = TRUE;
+    BarleyWriteDiag(L"DiagDeviceAddComplete", 0U);
     return STATUS_SUCCESS;
 }
 
