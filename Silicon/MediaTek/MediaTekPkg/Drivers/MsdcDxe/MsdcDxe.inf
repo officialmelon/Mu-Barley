@@ -34,11 +34,16 @@
   gMediaTekPmicProtocolGuid       ## CONSUMES
   gEfiSdMmcPassThruProtocolGuid   ## PRODUCES
 
+[Guids]
+  gEfiEventExitBootServicesGuid
+
 [FixedPcd]
   gMediaTekPkgTokenSpaceGuid.PcdStorageIsEMMC
   gMediaTekPkgTokenSpaceGuid.PcdMsdcHostMask
   gMediaTekPkgTokenSpaceGuid.PcdMsdcPreserveBootStateMask
   gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableMaxClockHz
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcEmmcBusWidth
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableBusWidth
 
 [Depex]
   gMediaTekGpioProtocolGuid AND

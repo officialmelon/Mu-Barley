@@ -33,6 +33,7 @@
 
 #include <IndustryStandard/Sd.h>
 #include <IndustryStandard/Emmc.h>
+#include <Guid/EventGroup.h>
 
 //
 // Constants
@@ -52,6 +53,16 @@
 #define SCLK_CYCLES_SHIFT   (20)
 
 #define BLOCK_SIZE 512
+
+#define EMMC_EXT_CSD_BUS_WIDTH       183
+#define EMMC_EXT_CSD_HS_TIMING       185
+#define EMMC_BUS_WIDTH_1             0
+#define EMMC_BUS_WIDTH_4             1
+#define EMMC_BUS_WIDTH_8             2
+#define EMMC_HS_TIMING_HIGH_SPEED    1
+
+#define SD_BUS_WIDTH_1               0
+#define SD_BUS_WIDTH_4               2
 
 //
 // Registers

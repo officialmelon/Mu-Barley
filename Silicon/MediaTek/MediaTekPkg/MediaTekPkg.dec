@@ -31,3 +31,7 @@
   gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableCardDetectActiveHigh|FALSE|BOOLEAN|0x0000E106
   # Conservative default for an initialized removable card.
   gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableMaxClockHz|50000000|UINT32|0x0000E107
+  # Physical data-line wiring.  One-bit defaults preserve existing platforms
+  # until their board descriptions opt in to wider buses.
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcEmmcBusWidth|1|UINT8|0x0000E108
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableBusWidth|1|UINT8|0x0000E109

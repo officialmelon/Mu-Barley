@@ -71,6 +71,10 @@
   gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableVqmmcRegulatorName|"ldo_vmc"
   gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableCardDetectPin|18
   gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableCardDetectActiveHigh|TRUE
+  # Lenovo routes all eight eMMC data lines and all four microSD data lines.
+  # MsdcDxe negotiates each width with the card before changing the host.
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcEmmcBusWidth|8
+  gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableBusWidth|4
   # Start at a conservative SD default-speed clock.  High-speed/UHS tuning is
   # deliberately deferred until basic removable Block I/O is proven.
   gMediaTekPkgTokenSpaceGuid.PcdMsdcRemovableMaxClockHz|25000000

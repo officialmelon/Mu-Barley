@@ -9,6 +9,14 @@
 #define MSDC_OCR_RETRY_COUNT_EMMC   10U
 #define MSDC_OCR_RETRY_COUNT_SD     100U
 
+STATIC MSDC_PRIVATE_DATA *mMsdcHosts[32];
+STATIC EFI_EVENT          mMsdcExitBootServicesEvent;
+
+EFI_STATUS
+CardReset (
+  EFI_SD_MMC_PASS_THRU_PROTOCOL *PassThru
+  );
+
 STATIC
 UINTN
 MsdcPollCount (
@@ -930,13 +938,12 @@ MsdcSendCmd (
 
   if (CommandBlk->CommandType != SdMmcCommandTypeBc) {
     if (CommandBlk->ResponseType == SdMmcResponseTypeR2) {
-      MsdcRead (Private, SDC_RESP0, &SdMmcStatusBlk->Resp0);
-      MsdcRead (Private, SDC_RESP1, &SdMmcStatusBlk->Resp1);
-      MsdcRead (Private, SDC_RESP2, &SdMmcStatusBlk->Resp2);
-      MsdcRead (Private, SDC_RESP3, &SdMmcStatusBlk->Resp3);
-
-      // Per SDHCI spec, R2 response registers contains [127:8] bits only
-      CopyMem(&SdMmcStatusBlk->Resp0, (UINT8*)&SdMmcStatusBlk->Resp0 + 1, 15);
+      // Native MediaTek MSDC ordering is RESP3, RESP2, RESP1, RESP0.  This
+      // controller is not SDHCI and must not use SDHCI's one-byte R2 shift.
+      MsdcRead (Private, SDC_RESP3, &SdMmcStatusBlk->Resp0);
+      MsdcRead (Private, SDC_RESP2, &SdMmcStatusBlk->Resp1);
+      MsdcRead (Private, SDC_RESP1, &SdMmcStatusBlk->Resp2);
+      MsdcRead (Private, SDC_RESP0, &SdMmcStatusBlk->Resp3);
     } else {
       MsdcRead (Private, SDC_RESP0, &SdMmcStatusBlk->Resp0);
     }
@@ -963,6 +970,57 @@ MsdcSendCmd (
   }
 
   return Status;
+}
+
+STATIC
+VOID
+EFIAPI
+MsdcExitBootServices (
+  IN EFI_EVENT Event,
+  IN VOID      *Context
+  )
+{
+  EFI_STATUS Status;
+  UINTN Index;
+  MSDC_PRIVATE_DATA *Private;
+
+  (VOID)Event;
+  (VOID)Context;
+
+  for (Index = 0; Index < ARRAY_SIZE (mMsdcHosts); Index++) {
+    Private = mMsdcHosts[Index];
+    if (Private == NULL) {
+      continue;
+    }
+
+    /*
+     * UEFI may use 4-bit SD or 8-bit eMMC for fast boot I/O.  CMD0 has no
+     * response or data phase and returns the card to its protocol-default
+     * 1-bit identification state before the host width is narrowed.  Windows
+     * SDPORT can then begin a fresh 400-kHz identification sequence without
+     * inheriting a card/host width mismatch.  Power, parent clocks and pinmux
+     * deliberately remain enabled for the OS handoff.
+     */
+    Status = CardReset (&Private->PassThru);
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_WARN, "MsdcDxe: host %u CMD0 handoff failed: %r\n",
+              Private->Index, Status));
+    }
+
+    MsdcSetBusWidth (Private, 1);
+    Status = MsdcReset (Private);
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_WARN, "MsdcDxe: host %u reset handoff failed: %r\n",
+              Private->Index, Status));
+    }
+    (VOID)MsdcClearFifo (Private);
+    MsdcClearInterrupts (Private);
+    Status = MsdcSetMclk (Private, 400000);
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_WARN, "MsdcDxe: host %u 400-kHz handoff failed: %r\n",
+              Private->Index, Status));
+    }
+  }
 }
 
 EFI_STATUS MsdcInit (
@@ -1402,6 +1460,51 @@ SdCardSwitch (
 }
 
 EFI_STATUS
+SdCardSetBusWidth (
+  EFI_SD_MMC_PASS_THRU_PROTOCOL *PassThru,
+  UINT16                         Rca,
+  UINT8                          BusWidth)
+{
+  EFI_SD_MMC_COMMAND_BLOCK SdMmcCmdBlk;
+  EFI_SD_MMC_STATUS_BLOCK SdMmcStatusBlk;
+  EFI_SD_MMC_PASS_THRU_COMMAND_PACKET Packet;
+  EFI_STATUS Status;
+  UINT32 Argument;
+
+  if (BusWidth == 1) {
+    Argument = SD_BUS_WIDTH_1;
+  } else if (BusWidth == 4) {
+    Argument = SD_BUS_WIDTH_4;
+  } else {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  ZeroMem (&SdMmcCmdBlk, sizeof (SdMmcCmdBlk));
+  ZeroMem (&SdMmcStatusBlk, sizeof (SdMmcStatusBlk));
+  ZeroMem (&Packet, sizeof (Packet));
+
+  Packet.SdMmcCmdBlk    = &SdMmcCmdBlk;
+  Packet.SdMmcStatusBlk = &SdMmcStatusBlk;
+
+  SdMmcCmdBlk.CommandIndex    = SD_APP_CMD;
+  SdMmcCmdBlk.CommandType     = SdMmcCommandTypeAc;
+  SdMmcCmdBlk.ResponseType    = SdMmcResponseTypeR1;
+  SdMmcCmdBlk.CommandArgument = (UINT32)Rca << 16;
+
+  Status = MsdcPassThru (PassThru, 0, &Packet, NULL);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  SdMmcCmdBlk.CommandIndex    = SD_SET_BUS_WIDTH;
+  SdMmcCmdBlk.CommandType     = SdMmcCommandTypeAc;
+  SdMmcCmdBlk.ResponseType    = SdMmcResponseTypeR1;
+  SdMmcCmdBlk.CommandArgument = Argument;
+
+  return MsdcPassThru (PassThru, 0, &Packet, NULL);
+}
+
+EFI_STATUS
 EMMCSwitch (
   EFI_SD_MMC_PASS_THRU_PROTOCOL *PassThru,
   UINT8 Access,
@@ -1444,6 +1547,7 @@ CardSetBusMode (
   EFI_SD_MMC_PASS_THRU_PROTOCOL *PassThru;
   UINT8 SwitchResp[64];
   UINT32 DevStatus;
+  UINT8 BusWidth;
 
   PassThru = &Private->PassThru;
 
@@ -1454,8 +1558,28 @@ CardSetBusMode (
     return Status;
   }
 
-  if (Private->SdInfo.CardType == SdCard)
-  {
+  if (Private->SdInfo.CardType == SdCard) {
+    BusWidth = FixedPcdGet8 (PcdMsdcRemovableBusWidth);
+    if ((BusWidth != 1) && (BusWidth != 4)) {
+      DEBUG ((DEBUG_ERROR, "MsdcDxe: invalid removable bus width %u\n", BusWidth));
+      return EFI_INVALID_PARAMETER;
+    }
+
+    if (BusWidth == 4) {
+      // The card must accept ACMD6 before the controller begins sampling the
+      // additional data lines.  Reversing this order loses the response path.
+      Status = SdCardSetBusWidth (PassThru, Rca, BusWidth);
+      if (EFI_ERROR (Status)) {
+        DEBUG ((DEBUG_WARN, "MsdcDxe: SD ACMD6 failed with status %r; retaining 1-bit mode\n", Status));
+        BusWidth = 1;
+        MsdcSetBusWidth (Private, BusWidth);
+      } else {
+        MsdcSetBusWidth (Private, BusWidth);
+      }
+    } else {
+      MsdcSetBusWidth (Private, BusWidth);
+    }
+
     Status = SdCardSwitch(PassThru, 1, 0xF, 0xF, 0xF, TRUE, SwitchResp);
     if (EFI_ERROR(Status))
     {
@@ -1463,7 +1587,50 @@ CardSetBusMode (
       return Status;
     }
   } else {
-    Status = EMMCSwitch(PassThru, 3, 185, 1, 0);
+    BusWidth = FixedPcdGet8 (PcdMsdcEmmcBusWidth);
+    if ((BusWidth != 1) && (BusWidth != 4) && (BusWidth != 8)) {
+      DEBUG ((DEBUG_ERROR, "MsdcDxe: invalid eMMC bus width %u\n", BusWidth));
+      return EFI_INVALID_PARAMETER;
+    }
+
+    if (BusWidth != 1) {
+      Status = EMMCSwitch (
+                 PassThru,
+                 3,
+                 EMMC_EXT_CSD_BUS_WIDTH,
+                 BusWidth == 8 ? EMMC_BUS_WIDTH_8 : EMMC_BUS_WIDTH_4,
+                 0
+                 );
+      if (EFI_ERROR (Status)) {
+        DEBUG ((DEBUG_WARN, "MsdcDxe: eMMC bus-width switch failed with status %r; retaining 1-bit mode\n", Status));
+        BusWidth = 1;
+        MsdcSetBusWidth (Private, BusWidth);
+      } else {
+        Status = CardSendStatus (PassThru, Rca, &DevStatus);
+        if (EFI_ERROR (Status)) {
+          DEBUG ((DEBUG_ERROR, "MsdcDxe: CardSendStatus failed with status %r\n", Status));
+          return Status;
+        }
+
+        if ((DevStatus & BIT7) != 0) {
+          DEBUG ((DEBUG_WARN, "MsdcDxe: eMMC rejected bus width %u, status 0x%x; retaining 1-bit mode\n", BusWidth, DevStatus));
+          BusWidth = 1;
+          MsdcSetBusWidth (Private, BusWidth);
+        } else {
+          MsdcSetBusWidth (Private, BusWidth);
+        }
+      }
+    } else {
+      MsdcSetBusWidth (Private, BusWidth);
+    }
+
+    Status = EMMCSwitch (
+               PassThru,
+               3,
+               EMMC_EXT_CSD_HS_TIMING,
+               EMMC_HS_TIMING_HIGH_SPEED,
+               0
+               );
     if (EFI_ERROR(Status))
     {
       DEBUG ((DEBUG_ERROR, "MsdcDxe: EMMCSwitch failed with status %r\n", Status));
@@ -1484,9 +1651,13 @@ CardSetBusMode (
   }
 
   if (Private->SdInfo.CardType == SdCard) {
+    DEBUG ((DEBUG_INFO, "MsdcDxe: SD host %u using %u-bit data at up to %u Hz\n",
+            Private->Index, BusWidth, FixedPcdGet32 (PcdMsdcRemovableMaxClockHz)));
     return MsdcSetMclk (Private, FixedPcdGet32 (PcdMsdcRemovableMaxClockHz));
   }
 
+  DEBUG ((DEBUG_INFO, "MsdcDxe: eMMC host %u using %u-bit data at 50000000 Hz\n",
+          Private->Index, BusWidth));
   return MsdcSetMclk (Private, 50 * 1000 * 1000);
 }
 
@@ -1662,6 +1833,21 @@ InitMsdc (
   BOOLEAN Present;
 
   Status = EFI_SUCCESS;
+  if (mMsdcExitBootServicesEvent == NULL) {
+    Status = gBS->CreateEventEx (
+                    EVT_NOTIFY_SIGNAL,
+                    TPL_NOTIFY,
+                    MsdcExitBootServices,
+                    NULL,
+                    &gEfiEventExitBootServicesGuid,
+                    &mMsdcExitBootServicesEvent
+                    );
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_ERROR, "MsdcDxe: failed to create OS handoff event: %r\n", Status));
+      return Status;
+    }
+  }
+
   for (UINTN i = 0; i < gPlatformInfo.NumberOfHosts; i++) {
     if ((FixedPcdGet32 (PcdMsdcHostMask) & (1U << i)) == 0) {
       continue;
@@ -1762,6 +1948,10 @@ InitMsdc (
       FreePool (DevicePath);
       FreePool (Private);
       continue;
+    }
+
+    if (i < ARRAY_SIZE (mMsdcHosts)) {
+      mMsdcHosts[i] = Private;
     }
   }
 
