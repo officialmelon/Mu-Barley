@@ -38,6 +38,7 @@
 
 #define HIMAX_REG_HW_CRC                     0x80010000U
 #define HIMAX_REG_TCON_RESET                 0x80020004U
+#define HIMAX_REG_ADC_RESET                  0x80020094U
 #define HIMAX_REG_RELOAD_STATUS              0x80050000U
 #define HIMAX_REG_RELOAD_CRC_RESULT          0x80050018U
 #define HIMAX_REG_RELOAD_START               0x80050020U
@@ -212,6 +213,17 @@ HimaxRegisterWrite(
         if (!NT_SUCCESS(status)) {
             return status;
         }
+
+        /*
+         * The HX83102J zero-flash vendor path requires a short settling
+         * interval after every SRAM burst.  Omitting it is harmless for small
+         * register writes but can leave the reload/CRC engine permanently
+         * busy after a full firmware upload (the stage-4 timeout observed on
+         * the tablet).
+         */
+        if (Length > HIMAX_REGISTER_SIZE) {
+            KeStallExecutionProcessor(100);
+        }
     }
 
     return STATUS_SUCCESS;
@@ -361,25 +373,32 @@ HimaxSenseOff(
     NTSTATUS status;
     ULONG value;
     ULONG retry;
-    UCHAR password[2];
+    UCHAR password;
 
-    for (retry = 0U; retry < 5U; ++retry) {
+    for (retry = 0U; retry < 16U; ++retry) {
         /*
-         * HX83102J defines the safe-mode key as one little-endian 16-bit
-         * write at command 0x31.  Keeping CS asserted across both password
-         * bytes is part of the wire protocol; two independent command
-         * transactions are not equivalent.
+         * Match Himax's HX83102J incell reference exactly: the low and high
+         * safe-mode password bytes are separate one-byte bus commands at
+         * 0x31 and 0x32.  Combining them into a single transaction leaves
+         * the controller outside central state 0x0c on this panel.
          */
         Context->HimaxDetectSubstage = 10U;
-        password[0] = 0x27U;
-        password[1] = 0x95U;
+        password = 0x27U;
         status = HimaxBusWrite(Context, HIMAX_CMD_SAFE_MODE_LOW,
-                               password, sizeof(password));
+                               &password, sizeof(password));
         if (!NT_SUCCESS(status)) {
             return status;
         }
 
         Context->HimaxDetectSubstage = 11U;
+        password = 0x95U;
+        status = HimaxBusWrite(Context, HIMAX_CMD_SAFE_MODE_HIGH,
+                               &password, sizeof(password));
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+
+        Context->HimaxDetectSubstage = 12U;
         status = HimaxRegisterRead32(Context, HIMAX_REG_FW_STATUS, &value);
         if (!NT_SUCCESS(status)) {
             return status;
@@ -391,6 +410,19 @@ HimaxSenseOff(
                 return status;
             }
             KeStallExecutionProcessor(1000);
+            status = HimaxRegisterWrite32(Context, HIMAX_REG_TCON_RESET, 1U);
+            if (!NT_SUCCESS(status)) {
+                return status;
+            }
+            status = HimaxRegisterWrite32(Context, HIMAX_REG_ADC_RESET, 0U);
+            if (!NT_SUCCESS(status)) {
+                return status;
+            }
+            KeStallExecutionProcessor(1000);
+            status = HimaxRegisterWrite32(Context, HIMAX_REG_ADC_RESET, 1U);
+            if (!NT_SUCCESS(status)) {
+                return status;
+            }
             return STATUS_SUCCESS;
         }
 
@@ -398,7 +430,7 @@ HimaxSenseOff(
         BarleyMtkSpiResetTouch(&Context->Spi);
     }
 
-    Context->HimaxDetectSubstage = 12U;
+    Context->HimaxDetectSubstage = 13U;
     return STATUS_IO_DEVICE_ERROR;
 }
 
@@ -685,6 +717,12 @@ HimaxCheckHardwareCrc(
         return STATUS_INVALID_PARAMETER;
     }
 
+    Context->HimaxCrcStartAddress = StartAddress;
+    Context->HimaxCrcLength = Length;
+    Context->HimaxCrcPoll = 0U;
+    Context->HimaxCrcStatusValue = MAXULONG;
+    Context->HimaxCrcResult = MAXULONG;
+
     status = HimaxRegisterWrite32(Context, HIMAX_REG_RELOAD_START,
                                   StartAddress);
     if (!NT_SUCCESS(status)) {
@@ -710,9 +748,15 @@ HimaxCheckHardwareCrc(
         if (!NT_SUCCESS(status)) {
             return status;
         }
+        Context->HimaxCrcPoll = retry + 1U;
+        Context->HimaxCrcStatusValue = value;
         if ((value & 1U) == 0U) {
-            return HimaxRegisterRead32(Context,
-                                       HIMAX_REG_RELOAD_CRC_RESULT, Crc);
+            status = HimaxRegisterRead32(Context,
+                                         HIMAX_REG_RELOAD_CRC_RESULT, Crc);
+            if (NT_SUCCESS(status)) {
+                Context->HimaxCrcResult = *Crc;
+            }
+            return status;
         }
         KeStallExecutionProcessor(1000);
     }
@@ -824,7 +868,9 @@ HimaxUploadPartitions(
     if (dsramBase == MAXULONG || dsramEnd <= dsramBase) {
         return STATUS_FILE_CORRUPT_ERROR;
     }
-    configLength = (dsramEnd - dsramBase + 3U) & ~3U;
+    /* Match Himax's zero-flash partition ABI: the combined DSRAM image is
+     * padded to a 16-byte boundary before its software and hardware CRCs. */
+    configLength = (dsramEnd - dsramBase + 15U) & ~15U;
     if (configLength > HIMAX_DSRAM_SIZE) {
         return STATUS_BUFFER_OVERFLOW;
     }

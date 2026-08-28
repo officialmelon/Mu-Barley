@@ -94,6 +94,12 @@ typedef struct _BARLEY_TOUCH_DEVICE_CONTEXT {
     ULONG HimaxIncrementValue;
     ULONG HimaxFirmwareStatus;
     ULONG HimaxChipId;
+    ULONG HimaxInitializationAttempt;
+    ULONG HimaxCrcStartAddress;
+    ULONG HimaxCrcLength;
+    ULONG HimaxCrcPoll;
+    ULONG HimaxCrcStatusValue;
+    ULONG HimaxCrcResult;
 
     PUCHAR Firmware;
     ULONG FirmwareLength;

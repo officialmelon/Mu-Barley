@@ -347,32 +347,6 @@ MtkMsdcResponseEncoding(
     }
 }
 
-static NTSTATUS
-MtkMsdcPollCommand(
-    _In_ PMTK_MSDC_EXTENSION Extension
-    )
-{
-    ULONG Observed;
-    ULONG Poll;
-
-    for (Poll = 0; Poll < MTK_MSDC_COMMAND_TIMEOUT_US; Poll += 1) {
-        Observed = MtkMsdcRead(Extension, MSDC_INT) & MSDC_INT_CMD_STATUS;
-        if (Observed != 0) {
-            MtkMsdcWrite(Extension, MSDC_INT, Observed);
-            if ((Observed & MSDC_INT_CMD_ERROR) != 0) {
-                return MtkMsdcStatusFromInterrupt(Observed);
-            }
-            if ((Observed & MSDC_INT_CMDRDY) != 0) {
-                return STATUS_SUCCESS;
-            }
-        }
-
-        SdPortWait(1);
-    }
-
-    return STATUS_IO_TIMEOUT;
-}
-
 static VOID
 MtkMsdcCaptureResponse(
     _In_ PMTK_MSDC_EXTENSION Extension
@@ -469,28 +443,37 @@ MtkMsdcIssueCommand(
         }
     }
 
-    /* This first version completes requests synchronously by polling. */
-    MtkMsdcWrite(Extension, MSDC_INTEN, 0);
+    /*
+     * Command requests are owned by SDPORT once this callback returns
+     * STATUS_PENDING.  Completing a command from inside IssueRequest races
+     * the port driver's outstanding-request bookkeeping and caused the
+     * observed bugcheck 0x139.  Arm the real controller interrupt and let
+     * SDPORT invoke MtkMsdcRequestDpc after IssueRequest has returned.
+     *
+     * Data movement remains bounded PIO in the later StartTransfer phase, so
+     * the command phase waits only for the card-response event here.
+     */
+    MtkMsdcClearBits(Extension, MSDC_INTEN, MSDC_INT_CMD_STATUS);
     MtkMsdcClearAllInterrupts(Extension);
+    Request->RequiredEvents = SDPORT_EVENT_CARD_RESPONSE;
+    if (HasData) {
+        /*
+         * SDPORT advances a PIO command into SdRequestTypeStartTransfer only
+         * after the miniport reports the appropriate buffer-ready event.
+         * MTK exposes FIFO fill counts instead of a dedicated threshold IRQ,
+         * so the ISR synthesizes this event with command completion and the
+         * transfer routine then polls the real FIFO count safely.
+         */
+        Request->RequiredEvents |=
+            Command->TransferDirection == SdTransferDirectionRead
+                ? SDPORT_EVENT_BUFFER_FULL
+                : SDPORT_EVENT_BUFFER_EMPTY;
+    }
+    Request->Status = STATUS_PENDING;
+    MtkMsdcSetBits(Extension, MSDC_INTEN, MSDC_INT_CMD_STATUS);
     MtkMsdcWrite(Extension, SDC_ARG, Command->Argument);
     MtkMsdcWrite(Extension, SDC_CMD, RawCommand);
-
-    Status = MtkMsdcPollCommand(Extension);
-    if (!NT_SUCCESS(Status)) {
-        (VOID)MtkMsdcRecover(Extension);
-        return Status;
-    }
-
-    MtkMsdcCaptureResponse(Extension);
-    if (!HasData &&
-        (Command->ResponseType == SdResponseTypeR1B ||
-         Command->ResponseType == SdResponseTypeR5B)) {
-        Status = MtkMsdcWaitReady(Extension, TRUE);
-    }
-
-    Request->RequiredEvents = 0;
-    Request->Status = Status;
-    return Status;
+    return STATUS_PENDING;
 }
 
 static VOID
@@ -552,8 +535,10 @@ MtkMsdcPioRead(
             Remaining -= Chunk;
         }
 
-        if (Observed != 0) {
-            MtkMsdcWrite(Extension, MSDC_INT, Observed);
+        if ((Observed & ~MSDC_INT_XFER_COMPL) != 0) {
+            MtkMsdcWrite(Extension,
+                         MSDC_INT,
+                         Observed & ~MSDC_INT_XFER_COMPL);
         }
         if ((Observed & (MSDC_INT_DATA_ERROR | MSDC_INT_ACMD_ERROR)) != 0) {
             return MtkMsdcStatusFromInterrupt(Observed);
@@ -636,8 +621,10 @@ MtkMsdcPioWrite(
             Remaining -= Chunk;
         }
 
-        if (Observed != 0) {
-            MtkMsdcWrite(Extension, MSDC_INT, Observed);
+        if ((Observed & ~MSDC_INT_XFER_COMPL) != 0) {
+            MtkMsdcWrite(Extension,
+                         MSDC_INT,
+                         Observed & ~MSDC_INT_XFER_COMPL);
         }
         if ((Observed & (MSDC_INT_DATA_ERROR | MSDC_INT_ACMD_ERROR)) != 0) {
             return MtkMsdcStatusFromInterrupt(Observed);
@@ -699,6 +686,10 @@ MtkMsdcStartTransfer(
         (VOID)MtkMsdcRecover(Extension);
     }
 
+    if (NT_SUCCESS(Status)) {
+        Request->Command.DataBuffer += Length;
+        Request->Command.BlockCount = 0;
+    }
     Request->RequiredEvents = 0;
     Request->Status = Status;
     return Status;
@@ -814,6 +805,7 @@ MtkMsdcInitialize(
      * miniport only programs MSDC_CFG's local divider.
      */
     Extension->CurrentClockHz = 20000000;
+    Extension->OutstandingRequest = NULL;
 
     RtlZeroMemory(&Extension->Capabilities,
                   sizeof(Extension->Capabilities));
@@ -829,7 +821,12 @@ MtkMsdcInitialize(
     Extension->Capabilities.Supported.DriverTypeB = 1;
     Extension->Capabilities.Supported.Voltage33V = 1;
     Extension->Capabilities.Supported.Limit200mA = 1;
-    Extension->Capabilities.Supported.AutoCmd12 = 1;
+    /*
+     * Keep the first proven PIO path single-purpose.  MTK auto-CMD12 has its
+     * own completion/error bits; advertising it before that second command
+     * path is implemented can hide an otherwise successful data transfer.
+     */
+    Extension->Capabilities.Supported.AutoCmd12 = 0;
     Extension->Capabilities.Flags.UsePioForRead = 1;
     Extension->Capabilities.Flags.UsePioForWrite = 1;
 
@@ -843,9 +840,13 @@ MtkMsdcInitialize(
     }
 
     MtkMsdcWrite(Extension, MSDC_INTEN, 0);
-    MtkMsdcSetBits(Extension, SDC_CFG, SDC_CFG_SDIO);
-    MtkMsdcClearBits(Extension, SDC_CFG, SDC_CFG_SDIOIDE);
+    /* Memory-only hosts do not need SDIO mode (which is only used for CMD5). */
+    MtkMsdcClearBits(Extension, SDC_CFG, SDC_CFG_SDIO | SDC_CFG_SDIOIDE);
     (VOID)MtkMsdcSetBusWidth(Extension, SdBusWidth1Bit);
+    Status = MtkMsdcSetClock(Extension, 400000);
+    if (!NT_SUCCESS(Status)) {
+        return Status;
+    }
 
     /* Proven MT6768 host quirks from Mu-Silicium MsdcDxe. */
     MtkMsdcWrite(Extension, MSDC_IOCON, 0);
@@ -878,6 +879,10 @@ MtkMsdcIssueBusOperation(
     switch (BusOperation->Type) {
     case SdResetHw:
     case SdResetHost:
+        MtkMsdcWrite(Extension, MSDC_INTEN, 0);
+        (VOID)InterlockedExchangePointer(
+            &Extension->OutstandingRequest,
+            NULL);
         return MtkMsdcRecover(Extension);
 
     case SdSetClock:
@@ -995,9 +1000,24 @@ MtkMsdcInterrupt(
         return FALSE;
     }
 
-    MtkMsdcWrite(Extension, MSDC_INT, Pending);
     if ((Pending & MSDC_INT_CMDRDY) != 0) {
+        PSDPORT_REQUEST Outstanding;
+
         *Events |= SDPORT_EVENT_CARD_RESPONSE;
+        Outstanding = (PSDPORT_REQUEST)InterlockedCompareExchangePointer(
+            &Extension->OutstandingRequest,
+            NULL,
+            NULL);
+        if (Outstanding != NULL &&
+            Outstanding->Type == SdRequestTypeCommandWithTransfer) {
+            if (Outstanding->Command.TransferDirection ==
+                SdTransferDirectionRead) {
+                *Events |= SDPORT_EVENT_BUFFER_FULL;
+            } else if (Outstanding->Command.TransferDirection ==
+                       SdTransferDirectionWrite) {
+                *Events |= SDPORT_EVENT_BUFFER_EMPTY;
+            }
+        }
     }
     if ((Pending & MSDC_INT_XFER_COMPL) != 0) {
         *Events |= SDPORT_EVENT_CARD_RW_END;
@@ -1010,6 +1030,7 @@ MtkMsdcInterrupt(
     }
 
     *Errors = MtkMsdcErrorsFromInterrupt(Pending);
+    MtkMsdcWrite(Extension, MSDC_INT, Pending);
     if (*Errors != 0) {
         *Events |= SDPORT_EVENT_ERROR;
     }
@@ -1025,6 +1046,7 @@ MtkMsdcIssueRequest(
     )
 {
     PMTK_MSDC_EXTENSION Extension;
+    NTSTATUS Status;
 
     if (PrivateExtension == NULL || Request == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -1034,9 +1056,56 @@ MtkMsdcIssueRequest(
     switch (Request->Type) {
     case SdRequestTypeCommandNoTransfer:
     case SdRequestTypeCommandWithTransfer:
-        return MtkMsdcIssueCommand(Extension, Request);
+        if (InterlockedCompareExchangePointer(
+                &Extension->OutstandingRequest,
+                Request,
+                NULL) != NULL) {
+            return STATUS_DEVICE_BUSY;
+        }
+
+        Status = MtkMsdcIssueCommand(Extension, Request);
+        if (Status != STATUS_PENDING) {
+            (VOID)InterlockedCompareExchangePointer(
+                &Extension->OutstandingRequest,
+                NULL,
+                Request);
+        }
+        return Status;
+
     case SdRequestTypeStartTransfer:
-        return MtkMsdcStartTransfer(Extension, Request);
+        /*
+         * The buffer-ready event advances the same outstanding PIO request
+         * into its StartTransfer phase.  Ownership remains with this request
+         * until the latched transfer-complete interrupt reaches RequestDpc.
+         */
+        if (InterlockedCompareExchangePointer(
+                &Extension->OutstandingRequest,
+                Request,
+                Request) != Request) {
+            return STATUS_INVALID_DEVICE_STATE;
+        }
+        Status = MtkMsdcStartTransfer(Extension, Request);
+        if (NT_SUCCESS(Status)) {
+            /*
+             * PIO observed transfer completion but deliberately left the MTK
+             * XFER_COMPL bit latched.  Arm the data interrupt now; it becomes
+             * the one asynchronous completion path through RequestDpc.
+             */
+            Request->RequiredEvents = SDPORT_EVENT_CARD_RW_END;
+            Request->Status = STATUS_PENDING;
+            MtkMsdcSetBits(Extension, MSDC_INTEN, MSDC_INT_DATA_STATUS);
+            return STATUS_PENDING;
+        }
+
+        Request->RequiredEvents = 0;
+        Request->Status = Status;
+        MtkMsdcClearBits(Extension, MSDC_INTEN, MSDC_INT_DATA_STATUS);
+        (VOID)InterlockedCompareExchangePointer(
+            &Extension->OutstandingRequest,
+            NULL,
+            Request);
+        return Status;
+
     default:
         return STATUS_NOT_SUPPORTED;
     }
@@ -1051,7 +1120,7 @@ MtkMsdcGetResponse(
     )
 {
     PMTK_MSDC_EXTENSION Extension;
-    UCHAR RawResponse[SDPORT_MAX_RESPONSE_LENGTH];
+    ULONG OrderedResponse[4];
 
     Extension = (PMTK_MSDC_EXTENSION)PrivateExtension;
     RtlZeroMemory(ResponseBuffer, SDPORT_MAX_RESPONSE_LENGTH);
@@ -1067,16 +1136,21 @@ MtkMsdcGetResponse(
     }
 
     /*
-     * MTK exposes the full 128 response bits.  SDPORT consumes the standard
-     * SDHC 136-bit response window, which omits the low CRC byte.  Apply the
-     * same one-byte compaction used by the proven Mu-Silicium pass-thru path.
+     * Native MediaTek MSDC R2 ordering is RESP3, RESP2, RESP1, RESP0.
+     * MSDC is not SDHCI: its four response words must not be subjected to
+     * SDHCI's shifted 136-bit response-register compaction.  Both CID and CSD
+     * use R2, so corrupting this ordering prevents SDPORT from creating a card
+     * child even though the ACPI controller itself reports Started.
+     *
+     * This matches upstream MediaTek mtk-sd.c's MMC_RSP_136 handling.
      */
-    RtlCopyMemory(RawResponse,
-                  Extension->Response,
-                  sizeof(RawResponse));
+    OrderedResponse[0] = Extension->Response[3];
+    OrderedResponse[1] = Extension->Response[2];
+    OrderedResponse[2] = Extension->Response[1];
+    OrderedResponse[3] = Extension->Response[0];
     RtlCopyMemory(ResponseBuffer,
-                  RawResponse + 1,
-                  SDPORT_MAX_RESPONSE_LENGTH - 1);
+                  OrderedResponse,
+                  sizeof(OrderedResponse));
 }
 
 _Use_decl_annotations_
@@ -1088,12 +1162,79 @@ MtkMsdcRequestDpc(
     ULONG Errors
     )
 {
-    UNREFERENCED_PARAMETER(PrivateExtension);
-    UNREFERENCED_PARAMETER(Request);
-    UNREFERENCED_PARAMETER(Events);
-    UNREFERENCED_PARAMETER(Errors);
+    BOOLEAN CommandTransferEvent;
+    PMTK_MSDC_EXTENSION Extension;
+    NTSTATUS Status;
 
-    /* All request completions in the first diagnostic build are synchronous. */
+    if (PrivateExtension == NULL || Request == NULL) {
+        return;
+    }
+
+    Extension = (PMTK_MSDC_EXTENSION)PrivateExtension;
+    if (InterlockedCompareExchangePointer(
+            &Extension->OutstandingRequest,
+            Request,
+            Request) != Request) {
+        return;
+    }
+
+    Request->RequiredEvents &= ~Events;
+    CommandTransferEvent =
+        (Events & SDPORT_EVENT_CARD_RESPONSE) != 0 &&
+        Request->Command.TransferType != SdTransferTypeNone &&
+        Request->Command.TransferType != SdTransferTypeUndefined;
+
+    if (Errors != 0) {
+        Request->RequiredEvents = 0;
+        if ((Errors & (SDPORT_ERROR_CMD_TIMEOUT |
+                       SDPORT_ERROR_DATA_TIMEOUT |
+                       SDPORT_ERROR_ACMD12_RESPONSE_TIMEOUT)) != 0) {
+            Status = STATUS_IO_TIMEOUT;
+        } else if ((Errors & (SDPORT_ERROR_CMD_CRC_ERROR |
+                              SDPORT_ERROR_DATA_CRC_ERROR |
+                              SDPORT_ERROR_ACMD12_RESPONSE_CRC_ERROR)) != 0) {
+            Status = STATUS_CRC_ERROR;
+        } else {
+            Status = STATUS_IO_DEVICE_ERROR;
+        }
+    } else {
+        Status = STATUS_SUCCESS;
+        if ((Events & SDPORT_EVENT_CARD_RESPONSE) != 0) {
+            MtkMsdcCaptureResponse(Extension);
+            MtkMsdcClearBits(Extension, MSDC_INTEN, MSDC_INT_CMD_STATUS);
+            if (Request->Command.ResponseType == SdResponseTypeR1B ||
+                Request->Command.ResponseType == SdResponseTypeR5B) {
+                Status = MtkMsdcWaitReady(Extension, TRUE);
+            }
+        }
+    }
+
+    /*
+     * CARD_RESPONSE plus the synthetic FIFO-ready event is a phase boundary,
+     * not completion of a PIO command.  SDPORT now calls StartTransfer for
+     * this same request; its latched XFER_COMPL interrupt is the sole success
+     * completion below.
+     */
+    if (NT_SUCCESS(Status) &&
+        CommandTransferEvent &&
+        (Events & SDPORT_EVENT_CARD_RW_END) == 0) {
+        Request->Status = STATUS_PENDING;
+        return;
+    }
+
+    if (!NT_SUCCESS(Status) || Request->RequiredEvents == 0) {
+        MtkMsdcClearBits(Extension,
+                         MSDC_INTEN,
+                         MSDC_INT_CMD_STATUS | MSDC_INT_DATA_STATUS);
+        Request->RequiredEvents = 0;
+        Request->Status = Status;
+        if (InterlockedCompareExchangePointer(
+                &Extension->OutstandingRequest,
+                NULL,
+                Request) == Request) {
+            SdPortCompleteRequest(Request, Status);
+        }
+    }
 }
 
 static ULONG
@@ -1104,14 +1245,23 @@ MtkMsdcInterruptMaskFromEvents(
     ULONG InterruptMask;
 
     InterruptMask = 0;
+    if ((EventMask & SDPORT_EVENT_CARD_RESPONSE) != 0) {
+        InterruptMask |= MSDC_INT_CMD_STATUS;
+    }
+    if ((EventMask & SDPORT_EVENT_CARD_RW_END) != 0) {
+        InterruptMask |= MSDC_INT_DATA_STATUS;
+    }
+    if ((EventMask & SDPORT_EVENT_ERROR) != 0) {
+        InterruptMask |= MSDC_INT_CMD_ERROR |
+                         MSDC_INT_DATA_ERROR |
+                         MSDC_INT_ACMD_ERROR;
+    }
     if ((EventMask & SDPORT_EVENT_CARD_CHANGE) != 0) {
         InterruptMask |= MSDC_INT_CDSC;
     }
     if ((EventMask & SDPORT_EVENT_CARD_INTERRUPT) != 0) {
         InterruptMask |= MSDC_INT_MMCIRQ;
     }
-
-    /* Request-completion events are polled in this first safe build. */
     return InterruptMask;
 }
 

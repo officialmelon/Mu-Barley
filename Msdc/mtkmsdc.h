@@ -15,6 +15,7 @@ typedef struct _MTK_MSDC_EXTENSION {
     ULONG HostIndex;
     BOOLEAN IsEmmc;
     BOOLEAN CrashdumpMode;
+    PVOID volatile OutstandingRequest;
 } MTK_MSDC_EXTENSION, *PMTK_MSDC_EXTENSION;
 
 DRIVER_INITIALIZE DriverEntry;

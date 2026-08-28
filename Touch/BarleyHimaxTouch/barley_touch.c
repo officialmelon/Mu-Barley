@@ -337,6 +337,7 @@ BarleyTouchEvtD0Entry(
 {
     NTSTATUS status;
     PBARLEY_TOUCH_DEVICE_CONTEXT context;
+    ULONG attempt;
 
     UNREFERENCED_PARAMETER(PreviousState);
     context = BarleyTouchGetContext(Device);
@@ -364,8 +365,34 @@ BarleyTouchEvtD0Entry(
         return status;
     }
 
-    status = BarleyHimaxInitialize(context);
+    status = STATUS_UNSUCCESSFUL;
+    for (attempt = 1U; attempt <= 2U; ++attempt) {
+        context->HimaxInitializationAttempt = attempt;
+        status = BarleyHimaxInitialize(context);
+        if (NT_SUCCESS(status)) {
+            break;
+        }
+
+        if (attempt != 2U &&
+            (status == STATUS_IO_TIMEOUT ||
+             status == STATUS_CRC_ERROR ||
+             status == STATUS_DATA_ERROR ||
+             status == STATUS_IO_DEVICE_ERROR)) {
+            /*
+             * A warm reboot can leave the zero-flash reload engine busy.
+             * Release the partial image, perform a real GPIO reset, and make
+             * one clean initialization attempt before failing PnP start.
+             */
+            BarleyHimaxReleaseFirmware(context);
+            BarleyMtkSpiResetTouch(&context->Spi);
+            KeStallExecutionProcessor(10000);
+            continue;
+        }
+        break;
+    }
     BarleyWriteDiag(L"DiagHimaxInitStatus", status);
+    BarleyWriteDiag(L"DiagHimaxInitAttempt",
+                    context->HimaxInitializationAttempt);
     BarleyWriteDiag(L"DiagHimaxStage", context->InitializationStage);
     BarleyWriteDiag(L"DiagHimaxStageStatus", context->InitializationStatus);
     BarleyWriteDiag(L"DiagHimaxDetectSubstage", context->HimaxDetectSubstage);
@@ -373,6 +400,11 @@ BarleyTouchEvtD0Entry(
     BarleyWriteDiag(L"DiagHimaxIncrement", context->HimaxIncrementValue);
     BarleyWriteDiag(L"DiagHimaxFirmwareStatus", context->HimaxFirmwareStatus);
     BarleyWriteDiag(L"DiagHimaxChipId", context->HimaxChipId);
+    BarleyWriteDiag(L"DiagHimaxCrcAddress", context->HimaxCrcStartAddress);
+    BarleyWriteDiag(L"DiagHimaxCrcLength", context->HimaxCrcLength);
+    BarleyWriteDiag(L"DiagHimaxCrcPoll", context->HimaxCrcPoll);
+    BarleyWriteDiag(L"DiagHimaxCrcStatus", context->HimaxCrcStatusValue);
+    BarleyWriteDiag(L"DiagHimaxCrcResult", context->HimaxCrcResult);
     BarleyWriteDiag(L"DiagSpiLastReceiveWord", context->Spi.LastReceiveWord);
     BarleyWriteDiag(L"DiagHimaxResetDataOut", context->Spi.ResetDataOut);
     if (!NT_SUCCESS(status)) {
