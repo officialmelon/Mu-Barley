@@ -1505,23 +1505,25 @@ MtkMsdcGetResponse(
     }
 
     /*
-     * MTK RESP0..3 contain the complete 128-bit R2 payload, least-significant
-     * word first.  SDPORT does not consume the canonical wire-order CID/CSD;
-     * it consumes the SDHCI RESPONSE_0..3 register layout.  SDHCI omits the
-     * response CRC/end byte and places response bits 39:8 in register 0,
-     * 71:40 in register 1, and so on.  Compacting the native little-endian MTK
-     * register stream by one byte produces exactly that ABI.
+     * Microsoft's SDPORT reference miniport (sdhc.c, SdhcGetResponse) copies
+     * the response register space byte-by-byte in ascending order with no
+     * swap, reorder, or compaction.  SDPORT expects the RAW controller
+     * register image and performs its own wire-order assembly.
      *
-     * A full 16-byte reversal makes the text fields look human-readable, but
-     * it is the wrong interface layout and causes sdbus to cache malformed
-     * card data; sdstor then fails its first device command with Code 10.
+     * SDHCI stores R2 payload bits 127:96 in RESP3 and 31:0 in RESP0 (CRC
+     * bits dropped); MT6768 MSDC stores the same 128 payload bits the same
+     * way (verified: the eMMC CID and a valid 128 GB SD CSD v2 both decode
+     * from the raw image, first word in RESP3, MSB-first).  No transform is
+     * needed here.  Both the one-byte compaction (0.10.0/0.13.0, physically
+     * failed with sdstor loaded in M2.68-M2.71) and the full byte reversal
+     * (0.12.0, failed in M2.72) corrupt the image SDPORT assembles.  The
+     * 0.9.0 straight copy predates sdstor being loaded and was never
+     * exercised end to end.
      */
-    RtlCopyMemory(RawResponse,
-                  Extension->Response,
-                  sizeof(RawResponse));
+    UNREFERENCED_PARAMETER(RawResponse);
     RtlCopyMemory(ResponseBuffer,
-                  RawResponse + 1,
-                  SDPORT_MAX_RESPONSE_LENGTH - 1);
+                  Extension->Response,
+                  sizeof(Extension->Response));
 }
 
 _Use_decl_annotations_
