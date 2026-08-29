@@ -46,6 +46,8 @@ typedef struct _MTK_MSDC_EXTENSION {
     ULONG DiagLastTimeoutStage;
     ULONG DiagLastCardPresent;
     ULONG DiagCurrentBusWidth;
+    ULONG DiagCidResponse[4];
+    ULONG DiagCsdResponse[4];
 } MTK_MSDC_EXTENSION, *PMTK_MSDC_EXTENSION;
 
 DRIVER_INITIALIZE DriverEntry;

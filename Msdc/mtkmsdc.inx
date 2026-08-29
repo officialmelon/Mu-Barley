@@ -7,7 +7,7 @@ Signature="$Windows NT$"
 Class=SDHost
 ClassGUID={a0a588a4-c46f-4b37-b7ea-c82fe89870c6}
 Provider=%ProviderName%
-DriverVer=08/28/2026,0.8.0.0
+DriverVer=08/29/2026,0.9.0.0
 CatalogFile=mtkmsdc.cat
 PnpLockdown=1
 

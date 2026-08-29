@@ -58,7 +58,15 @@ MtkMsdcDiagWorker(
         { L"LastTimeoutStage", 0 },
         { L"LastCardPresent", 0 },
         { L"CurrentClockHz", 0 },
-        { L"CurrentBusWidth", 0 }
+        { L"CurrentBusWidth", 0 },
+        { L"Cid0", 0 },
+        { L"Cid1", 0 },
+        { L"Cid2", 0 },
+        { L"Cid3", 0 },
+        { L"Csd0", 0 },
+        { L"Csd1", 0 },
+        { L"Csd2", 0 },
+        { L"Csd3", 0 }
     };
     HANDLE Key;
     ULONG CharacterIndex;
@@ -107,6 +115,14 @@ MtkMsdcDiagWorker(
     Values[30].Value = Extension->DiagLastCardPresent;
     Values[31].Value = Extension->CurrentClockHz;
     Values[32].Value = Extension->DiagCurrentBusWidth;
+    Values[33].Value = Extension->DiagCidResponse[0];
+    Values[34].Value = Extension->DiagCidResponse[1];
+    Values[35].Value = Extension->DiagCidResponse[2];
+    Values[36].Value = Extension->DiagCidResponse[3];
+    Values[37].Value = Extension->DiagCsdResponse[0];
+    Values[38].Value = Extension->DiagCsdResponse[1];
+    Values[39].Value = Extension->DiagCsdResponse[2];
+    Values[40].Value = Extension->DiagCsdResponse[3];
 
     InitializeObjectAttributes(&Attributes,
                                &gMtkMsdcRegistryPath,
@@ -1246,6 +1262,7 @@ MtkMsdcIssueRequest(
     Extension->DiagLastBlockSize = Request->Command.BlockSize;
     Extension->DiagLastBlockCount = Request->Command.BlockCount;
     Extension->DiagLastLength = Request->Command.Length;
+    Extension->DiagLastTimeoutStage = 0;
 
     switch (Request->Type) {
     case SdRequestTypeCommandNoTransfer:
@@ -1341,8 +1358,6 @@ MtkMsdcGetResponse(
     )
 {
     PMTK_MSDC_EXTENSION Extension;
-    ULONG OrderedResponse[4];
-
     Extension = (PMTK_MSDC_EXTENSION)PrivateExtension;
     RtlZeroMemory(ResponseBuffer, SDPORT_MAX_RESPONSE_LENGTH);
 
@@ -1357,21 +1372,19 @@ MtkMsdcGetResponse(
     }
 
     /*
-     * Native MediaTek MSDC R2 ordering is RESP3, RESP2, RESP1, RESP0.
-     * MSDC is not SDHCI: its four response words must not be subjected to
-     * SDHCI's shifted 136-bit response-register compaction.  Both CID and CSD
-     * use R2, so corrupting this ordering prevents SDPORT from creating a card
-     * child even though the ACPI controller itself reports Started.
+     * SDPORT expects the same least-significant-word-first layout exposed by
+     * SDHCI RESPONSE_0..3.  Linux's MMC core uses the opposite logical array
+     * convention (cmd->resp[0] is the most-significant word), which is why
+     * upstream mtk-sd.c reads MTK RESP3..0 into Linux resp[0]..resp[3].
+     * Copying that Linux ordering into SDPORT reverses every CID and CSD.
      *
-     * This matches upstream MediaTek mtk-sd.c's MMC_RSP_136 handling.
+     * MTK RESP0 already corresponds to SDHCI RESPONSE_0 semantics.  Deliver
+     * RESP0..3 unchanged, and do not apply SDHCI's controller-specific byte
+     * compaction to this non-SDHCI controller.
      */
-    OrderedResponse[0] = Extension->Response[3];
-    OrderedResponse[1] = Extension->Response[2];
-    OrderedResponse[2] = Extension->Response[1];
-    OrderedResponse[3] = Extension->Response[0];
     RtlCopyMemory(ResponseBuffer,
-                  OrderedResponse,
-                  sizeof(OrderedResponse));
+                  Extension->Response,
+                  sizeof(Extension->Response));
 }
 
 _Use_decl_annotations_
@@ -1421,6 +1434,17 @@ MtkMsdcRequestDpc(
         Status = STATUS_SUCCESS;
         if ((Events & SDPORT_EVENT_CARD_RESPONSE) != 0) {
             MtkMsdcCaptureResponse(Extension);
+            if (Request->Command.ResponseType == SdResponseTypeR2) {
+                if (Request->Command.Index == 2) {
+                    RtlCopyMemory(Extension->DiagCidResponse,
+                                  Extension->Response,
+                                  sizeof(Extension->DiagCidResponse));
+                } else if (Request->Command.Index == 9) {
+                    RtlCopyMemory(Extension->DiagCsdResponse,
+                                  Extension->Response,
+                                  sizeof(Extension->DiagCsdResponse));
+                }
+            }
             MtkMsdcClearBits(Extension, MSDC_INTEN, MSDC_INT_CMD_STATUS);
             if (Request->Command.ResponseType == SdResponseTypeR1B ||
                 Request->Command.ResponseType == SdResponseTypeR5B) {
