@@ -68,6 +68,14 @@ MtkMsdcDiagWorker(
         { L"Csd1", 0 },
         { L"Csd2", 0 },
         { L"Csd3", 0 },
+        { L"CsdLate0", 0 },
+        { L"CsdLate1", 0 },
+        { L"CsdLate2", 0 },
+        { L"CsdLate3", 0 },
+        { L"CidCrcOk", 0 },
+        { L"CsdCrcOk", 0 },
+        { L"CsdStruct", 0 },
+        { L"CsdCapKb", 0 },
         { L"TraceSequence", 0 }
     };
     HANDLE Key;
@@ -126,7 +134,15 @@ MtkMsdcDiagWorker(
     Values[39].Value = Extension->DiagCsdResponse[1];
     Values[40].Value = Extension->DiagCsdResponse[2];
     Values[41].Value = Extension->DiagCsdResponse[3];
-    Values[42].Value = (ULONG)Extension->DiagTraceSequence;
+    Values[42].Value = Extension->DiagCsdLateResponse[0];
+    Values[43].Value = Extension->DiagCsdLateResponse[1];
+    Values[44].Value = Extension->DiagCsdLateResponse[2];
+    Values[45].Value = Extension->DiagCsdLateResponse[3];
+    Values[46].Value = Extension->DiagCidCrcOk;
+    Values[47].Value = Extension->DiagCsdCrcOk;
+    Values[48].Value = Extension->DiagCsdStructure;
+    Values[49].Value = Extension->DiagCsdCapKb;
+    Values[50].Value = (ULONG)Extension->DiagTraceSequence;
 
     InitializeObjectAttributes(&Attributes,
                                &gMtkMsdcRegistryPath,
@@ -1481,6 +1497,74 @@ MtkMsdcIssueRequest(
     }
 }
 
+
+/*
+ * SD CRC7 (x^7 + x^3 + 1), MSB-first, init 0.  Protects the 120 payload
+ * bits of an R2 response; the stored byte is CRC<<1 | end-bit.
+ */
+static UCHAR
+MtkMsdcCrc7(
+    const UCHAR *Data,
+    ULONG Length
+    )
+{
+    UCHAR Crc;
+    ULONG Index;
+    ULONG Bit;
+
+    Crc = 0;
+    for (Index = 0; Index < Length; Index += 1) {
+        Crc ^= Data[Index];
+        for (Bit = 0; Bit < 8; Bit += 1) {
+            Crc = (UCHAR)((Crc & 0x80) ? ((Crc << 1) ^ 0x12) : (Crc << 1));
+        }
+    }
+    return Crc;
+}
+
+/*
+ * Validate one R2 response and, for a CSD, extract the self-described
+ * geometry.  Everything is computed from the reversed (wire-order) image.
+ */
+static VOID
+MtkMsdcValidateR2(
+    PMTK_MSDC_EXTENSION Extension,
+    UCHAR CommandIndex
+    )
+{
+    UCHAR Reversed[SDPORT_MAX_RESPONSE_LENGTH];
+    UCHAR StoredCrc;
+    ULONG Index;
+
+    for (Index = 0; Index < SDPORT_MAX_RESPONSE_LENGTH; Index += 1) {
+        Reversed[Index] =
+            ((const UCHAR *)Extension->Response)[SDPORT_MAX_RESPONSE_LENGTH - 1 - Index];
+    }
+    StoredCrc = (UCHAR)(Reversed[15] >> 1);
+
+    if (CommandIndex == 2) {
+        Extension->DiagCidCrcOk =
+            (MtkMsdcCrc7(Reversed, 15) == StoredCrc) ? 1 : 0;
+    } else if (CommandIndex == 9) {
+        Extension->DiagCsdCrcOk =
+            (MtkMsdcCrc7(Reversed, 15) == StoredCrc) ? 1 : 0;
+        Extension->DiagCsdStructure = Reversed[0] >> 6;
+        if (Extension->DiagCsdStructure <= 1) {
+            ULONG ReadBlLen = Reversed[5] & 0x0F;
+            ULONG CSize = ((ULONG)(Reversed[6] & 0x03) << 10) |
+                          ((ULONG)Reversed[7] << 2) |
+                          (Reversed[8] >> 6);
+            ULONG_PTR Bytes = ((ULONG_PTR)(CSize + 1)) << (ReadBlLen + 2);
+            Extension->DiagCsdCapKb = (ULONG)(Bytes >> 10);
+        } else {
+            ULONG CSize22 = ((ULONG)(Reversed[7] & 0x3F) << 16) |
+                            ((ULONG)Reversed[8] << 8) |
+                            Reversed[9];
+            Extension->DiagCsdCapKb = (CSize22 + 1) * 512;
+        }
+    }
+}
+
 _Use_decl_annotations_
 VOID
 MtkMsdcGetResponse(
@@ -1580,10 +1664,22 @@ MtkMsdcRequestDpc(
                     RtlCopyMemory(Extension->DiagCidResponse,
                                   Extension->Response,
                                   sizeof(Extension->DiagCidResponse));
+                    MtkMsdcValidateR2(Extension, 2);
                 } else if (Request->Command.Index == 9) {
                     RtlCopyMemory(Extension->DiagCsdResponse,
                                   Extension->Response,
                                   sizeof(Extension->DiagCsdResponse));
+                    MtkMsdcValidateR2(Extension, 9);
+                    /* Latch check: re-read the registers 200 us later. */
+                    SdPortWait(200);
+                    Extension->DiagCsdLateResponse[0] =
+                        MtkMsdcRead(Extension, SDC_RESP0);
+                    Extension->DiagCsdLateResponse[1] =
+                        MtkMsdcRead(Extension, SDC_RESP1);
+                    Extension->DiagCsdLateResponse[2] =
+                        MtkMsdcRead(Extension, SDC_RESP2);
+                    Extension->DiagCsdLateResponse[3] =
+                        MtkMsdcRead(Extension, SDC_RESP3);
                 }
             }
             MtkMsdcClearBits(Extension, MSDC_INTEN, MSDC_INT_CMD_STATUS);

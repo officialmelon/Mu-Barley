@@ -52,6 +52,11 @@ typedef struct _MTK_MSDC_EXTENSION {
     ULONG DiagCurrentBusWidth;
     ULONG DiagCidResponse[4];
     ULONG DiagCsdResponse[4];
+    ULONG DiagCsdLateResponse[4];
+    ULONG DiagCidCrcOk;
+    ULONG DiagCsdCrcOk;
+    ULONG DiagCsdStructure;
+    ULONG DiagCsdCapKb;
     ULONG DiagTraceRequest[MTK_MSDC_TRACE_DEPTH];
     ULONG DiagTraceArgument[MTK_MSDC_TRACE_DEPTH];
 } MTK_MSDC_EXTENSION, *PMTK_MSDC_EXTENSION;
