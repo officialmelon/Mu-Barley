@@ -1,0 +1,31 @@
+## @file
+#  MediaTek T-PHY USB2 PHY library (generic-tphy-v1).
+#
+#  Copyright (C) 2026, TB330XU bring-up project.
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = MtkUsbPhyLib
+  FILE_GUID                      = 2C4A9C55-3B9F-4E23-9D74-6E1F55A0B702
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = MtkUsbPhyLib
+
+[Sources]
+  MtkUsbPhyLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MediaTekPkg/MediaTekPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  IoLib
+
+[Depex]
+  TRUE

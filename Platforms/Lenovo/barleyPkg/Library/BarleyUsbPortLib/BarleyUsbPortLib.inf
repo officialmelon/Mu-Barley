@@ -1,0 +1,27 @@
+## @file
+#  Barley board-specific USB port policy library.
+#
+#  Copyright (C) 2026, TB330XU bring-up project.
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = BarleyUsbPortLib
+  FILE_GUID                      = 2C4A9C55-3B9F-4E23-9D74-6E1F55A0B705
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = BarleyUsbPortLib
+
+[Sources]
+  BarleyUsbPortLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  DebugLib
+
+[Depex]
+  TRUE

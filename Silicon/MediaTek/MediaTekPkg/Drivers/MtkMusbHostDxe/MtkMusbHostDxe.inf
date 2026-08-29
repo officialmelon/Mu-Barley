@@ -1,0 +1,35 @@
+## @file
+#  MediaTek MUSB host controller driver (EFI_USB2_HC_PROTOCOL) - skeleton.
+#
+#  Copyright (C) 2026, TB330XU bring-up project.
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = MtkMusbHostDxe
+  FILE_GUID                      = 2C4A9C55-3B9F-4E23-9D74-6E1F55A0B703
+  MODULE_TYPE                    = UEFI_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = MtkMusbHostDxeEntry
+
+[Sources]
+  MtkMusbHostDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MediaTekPkg/MediaTekPkg.dec
+
+[LibraryClasses]
+  DebugLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+  MtkMusbCoreLib
+  MtkUsbPhyLib
+
+[Protocols]
+  gEfiUsb2HcProtocolGuid
+
+[Depex]
+  TRUE

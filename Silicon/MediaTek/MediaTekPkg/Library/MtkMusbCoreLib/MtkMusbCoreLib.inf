@@ -1,0 +1,37 @@
+## @file
+#  MediaTek MUSB core access library.
+#
+#  Copyright (C) 2026, TB330XU bring-up project.
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+#
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = MtkMusbCoreLib
+  FILE_GUID                      = 2C4A9C55-3B9F-4E23-9D74-6E1F55A0B701
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = MtkMusbCoreLib
+
+[Sources]
+  MtkMusbCoreLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MediaTekPkg/MediaTekPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  DebugLib
+  IoLib
+  TimerLib
+
+[Protocols]
+
+[Guids]
+
+[Pcd]
+
+[Depex]
+  TRUE
