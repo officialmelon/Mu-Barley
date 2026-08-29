@@ -33,6 +33,7 @@ MtkMsdcDiagWorker(
         { L"CommandPhaseCount", 0 },
         { L"StartTransferCount", 0 },
         { L"BusyRejectCount", 0 },
+        { L"StaleDpcCount", 0 },
         { L"CardDetectCount", 0 },
         { L"LastRequestType", 0 },
         { L"LastCommand", 0 },
@@ -66,7 +67,8 @@ MtkMsdcDiagWorker(
         { L"Csd0", 0 },
         { L"Csd1", 0 },
         { L"Csd2", 0 },
-        { L"Csd3", 0 }
+        { L"Csd3", 0 },
+        { L"TraceSequence", 0 }
     };
     HANDLE Key;
     ULONG CharacterIndex;
@@ -89,40 +91,42 @@ MtkMsdcDiagWorker(
     Values[4].Value = (ULONG)Extension->DiagCommandPhaseCount;
     Values[5].Value = (ULONG)Extension->DiagStartTransferCount;
     Values[6].Value = (ULONG)Extension->DiagBusyRejectCount;
-    Values[7].Value = (ULONG)Extension->DiagCardDetectCount;
-    Values[8].Value = Extension->DiagLastRequestType;
-    Values[9].Value = Extension->DiagLastCommand;
-    Values[10].Value = Extension->DiagLastArgument;
-    Values[11].Value = Extension->DiagLastResponseType;
-    Values[12].Value = Extension->DiagLastTransferType;
-    Values[13].Value = Extension->DiagLastDirection;
-    Values[14].Value = Extension->DiagLastBlockSize;
-    Values[15].Value = Extension->DiagLastBlockCount;
-    Values[16].Value = Extension->DiagLastLength;
-    Values[17].Value = Extension->DiagLastRequiredEvents;
-    Values[18].Value = Extension->DiagLastEvents;
-    Values[19].Value = Extension->DiagLastErrors;
-    Values[20].Value = Extension->DiagLastRawInterrupt;
-    Values[21].Value = Extension->DiagLastIntEnable;
-    Values[22].Value = Extension->DiagLastSdcStatus;
-    Values[23].Value = Extension->DiagLastFifoStatus;
-    Values[24].Value = Extension->Response[0];
-    Values[25].Value = Extension->Response[1];
-    Values[26].Value = Extension->Response[2];
-    Values[27].Value = Extension->Response[3];
-    Values[28].Value = Extension->DiagLastCompletionStatus;
-    Values[29].Value = Extension->DiagLastTimeoutStage;
-    Values[30].Value = Extension->DiagLastCardPresent;
-    Values[31].Value = Extension->CurrentClockHz;
-    Values[32].Value = Extension->DiagCurrentBusWidth;
-    Values[33].Value = Extension->DiagCidResponse[0];
-    Values[34].Value = Extension->DiagCidResponse[1];
-    Values[35].Value = Extension->DiagCidResponse[2];
-    Values[36].Value = Extension->DiagCidResponse[3];
-    Values[37].Value = Extension->DiagCsdResponse[0];
-    Values[38].Value = Extension->DiagCsdResponse[1];
-    Values[39].Value = Extension->DiagCsdResponse[2];
-    Values[40].Value = Extension->DiagCsdResponse[3];
+    Values[7].Value = (ULONG)Extension->DiagStaleDpcCount;
+    Values[8].Value = (ULONG)Extension->DiagCardDetectCount;
+    Values[9].Value = Extension->DiagLastRequestType;
+    Values[10].Value = Extension->DiagLastCommand;
+    Values[11].Value = Extension->DiagLastArgument;
+    Values[12].Value = Extension->DiagLastResponseType;
+    Values[13].Value = Extension->DiagLastTransferType;
+    Values[14].Value = Extension->DiagLastDirection;
+    Values[15].Value = Extension->DiagLastBlockSize;
+    Values[16].Value = Extension->DiagLastBlockCount;
+    Values[17].Value = Extension->DiagLastLength;
+    Values[18].Value = Extension->DiagLastRequiredEvents;
+    Values[19].Value = Extension->DiagLastEvents;
+    Values[20].Value = Extension->DiagLastErrors;
+    Values[21].Value = Extension->DiagLastRawInterrupt;
+    Values[22].Value = Extension->DiagLastIntEnable;
+    Values[23].Value = Extension->DiagLastSdcStatus;
+    Values[24].Value = Extension->DiagLastFifoStatus;
+    Values[25].Value = Extension->Response[0];
+    Values[26].Value = Extension->Response[1];
+    Values[27].Value = Extension->Response[2];
+    Values[28].Value = Extension->Response[3];
+    Values[29].Value = Extension->DiagLastCompletionStatus;
+    Values[30].Value = Extension->DiagLastTimeoutStage;
+    Values[31].Value = Extension->DiagLastCardPresent;
+    Values[32].Value = Extension->CurrentClockHz;
+    Values[33].Value = Extension->DiagCurrentBusWidth;
+    Values[34].Value = Extension->DiagCidResponse[0];
+    Values[35].Value = Extension->DiagCidResponse[1];
+    Values[36].Value = Extension->DiagCidResponse[2];
+    Values[37].Value = Extension->DiagCidResponse[3];
+    Values[38].Value = Extension->DiagCsdResponse[0];
+    Values[39].Value = Extension->DiagCsdResponse[1];
+    Values[40].Value = Extension->DiagCsdResponse[2];
+    Values[41].Value = Extension->DiagCsdResponse[3];
+    Values[42].Value = (ULONG)Extension->DiagTraceSequence;
 
     InitializeObjectAttributes(&Attributes,
                                &gMtkMsdcRegistryPath,
@@ -154,6 +158,48 @@ MtkMsdcDiagWorker(
                                     &Values[Index].Value,
                                     sizeof(Values[Index].Value));
             }
+        }
+
+        for (Index = 0; Index < MTK_MSDC_TRACE_DEPTH; Index += 1) {
+            ULONG TraceValue;
+
+            NameBuffer[0] = L'D';
+            NameBuffer[1] = L'i';
+            NameBuffer[2] = L'a';
+            NameBuffer[3] = L'g';
+            NameBuffer[4] = L'H';
+            NameBuffer[5] = (WCHAR)(L'0' + Extension->HostIndex);
+            NameBuffer[6] = L'T';
+            NameBuffer[7] = L'r';
+            NameBuffer[8] = L'a';
+            NameBuffer[9] = L'c';
+            NameBuffer[10] = L'e';
+            NameBuffer[11] = (WCHAR)(L'0' + (Index / 10));
+            NameBuffer[12] = (WCHAR)(L'0' + (Index % 10));
+            NameBuffer[13] = L'R';
+            NameBuffer[14] = L'e';
+            NameBuffer[15] = L'q';
+            NameBuffer[16] = L'\0';
+            RtlInitUnicodeString(&Name, NameBuffer);
+            TraceValue = Extension->DiagTraceRequest[Index];
+            (VOID)ZwSetValueKey(Key,
+                                &Name,
+                                0,
+                                REG_DWORD,
+                                &TraceValue,
+                                sizeof(TraceValue));
+
+            NameBuffer[13] = L'A';
+            NameBuffer[14] = L'r';
+            NameBuffer[15] = L'g';
+            RtlInitUnicodeString(&Name, NameBuffer);
+            TraceValue = Extension->DiagTraceArgument[Index];
+            (VOID)ZwSetValueKey(Key,
+                                &Name,
+                                0,
+                                REG_DWORD,
+                                &TraceValue,
+                                sizeof(TraceValue));
         }
         ZwClose(Key);
     }
@@ -850,10 +896,6 @@ MtkMsdcStartTransfer(
         (VOID)MtkMsdcRecover(Extension);
     }
 
-    if (NT_SUCCESS(Status)) {
-        Request->Command.DataBuffer += Length;
-        Request->Command.BlockCount = 0;
-    }
     Request->RequiredEvents = 0;
     Request->Status = Status;
     return Status;
@@ -1252,6 +1294,20 @@ MtkMsdcIssueRequest(
     Extension = (PMTK_MSDC_EXTENSION)PrivateExtension;
 
     InterlockedIncrement(&Extension->DiagIssueCount);
+    {
+        LONG Sequence;
+        ULONG TraceIndex;
+
+        Sequence = InterlockedIncrement(&Extension->DiagTraceSequence) - 1;
+        TraceIndex = (ULONG)Sequence % MTK_MSDC_TRACE_DEPTH;
+        Extension->DiagTraceRequest[TraceIndex] =
+            (((ULONG)Request->Type & 0x0f) << 28) |
+            (((ULONG)Request->Command.Index & 0x3f) << 22) |
+            (((ULONG)Request->Command.ResponseType & 0x0f) << 18) |
+            (((ULONG)Request->Command.TransferType & 0x0f) << 14) |
+            ((ULONG)Request->Command.BlockSize & 0x3fff);
+        Extension->DiagTraceArgument[TraceIndex] = Request->Command.Argument;
+    }
     Extension->DiagLastRequestType = (ULONG)Request->Type;
     Extension->DiagLastCommand = Request->Command.Index;
     Extension->DiagLastArgument = Request->Command.Argument;
@@ -1318,16 +1374,32 @@ MtkMsdcIssueRequest(
         Extension->DiagLastFifoStatus = MtkMsdcRead(Extension, MSDC_FIFOCS);
         if (NT_SUCCESS(Status)) {
             /*
-             * PIO observed transfer completion but deliberately left the MTK
-             * XFER_COMPL bit latched.  Arm the data interrupt now; it becomes
-             * the one asynchronous completion path through RequestDpc.
+             * The bounded polling path has already observed the hardware's
+             * transfer-complete condition.  Do not enable the interrupt after
+             * the status bit is already latched: MTK is not required to emit a
+             * new edge, which can strand this StartTransfer forever.  SDPORT's
+             * own sample permits a StartTransfer implementation to complete
+             * the request directly (its ADMA path does exactly this).
              */
-            Request->RequiredEvents = SDPORT_EVENT_CARD_RW_END;
+            MtkMsdcWrite(Extension, MSDC_INT, MSDC_INT_DATA_STATUS);
+            MtkMsdcClearBits(Extension, MSDC_INTEN, MSDC_INT_DATA_STATUS);
+            Request->RequiredEvents = 0;
             Request->Status = STATUS_SUCCESS;
-            MtkMsdcSetBits(Extension, MSDC_INTEN, MSDC_INT_DATA_STATUS);
             Extension->DiagLastRequiredEvents = Request->RequiredEvents;
+            Extension->DiagLastCompletionStatus = (ULONG)STATUS_SUCCESS;
+            if (InterlockedCompareExchangePointer(
+                    &Extension->OutstandingRequest,
+                    NULL,
+                    Request) == Request) {
+                InterlockedIncrement(&Extension->DiagCompleteCount);
+                MtkMsdcQueueDiagWork(Extension);
+                SdPortCompleteRequest(Request, STATUS_SUCCESS);
+                return STATUS_SUCCESS;
+            }
+
+            InterlockedIncrement(&Extension->DiagStaleDpcCount);
             MtkMsdcQueueDiagWork(Extension);
-            return STATUS_PENDING;
+            return STATUS_DEVICE_PROTOCOL_ERROR;
         }
 
         Request->RequiredEvents = 0;
@@ -1417,6 +1489,8 @@ MtkMsdcRequestDpc(
             &Extension->OutstandingRequest,
             Request,
             Request) != Request) {
+        InterlockedIncrement(&Extension->DiagStaleDpcCount);
+        MtkMsdcQueueDiagWork(Extension);
         return;
     }
 
