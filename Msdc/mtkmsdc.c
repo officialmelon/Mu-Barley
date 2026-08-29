@@ -4,10 +4,158 @@
 #define MTK_MSDC_COMMAND_TIMEOUT_US 1000000UL
 #define MTK_MSDC_DATA_TIMEOUT_US    5000000UL
 #define MTK_MSDC_BUSY_TIMEOUT_US      20000UL
+#define MTK_MSDC_REGISTRY_PATH_CHARS    512UL
 
 #define MTK_MSDC_LOG(_level, _format, ...)                              \
     KdPrintEx((DPFLTR_IHVDRIVER_ID, (_level),                           \
                "mtkmsdc: " _format, __VA_ARGS__))
+
+typedef struct _MTK_MSDC_DIAG_VALUE {
+    PCWSTR Name;
+    ULONG Value;
+} MTK_MSDC_DIAG_VALUE, *PMTK_MSDC_DIAG_VALUE;
+
+static WCHAR gMtkMsdcRegistryPathBuffer[MTK_MSDC_REGISTRY_PATH_CHARS];
+static UNICODE_STRING gMtkMsdcRegistryPath;
+
+static VOID
+MtkMsdcDiagWorker(
+    _In_ PVOID Parameter
+    )
+{
+    PMTK_MSDC_EXTENSION Extension;
+    OBJECT_ATTRIBUTES Attributes;
+    MTK_MSDC_DIAG_VALUE Values[] = {
+        { L"IssueCount", 0 },
+        { L"IsrCount", 0 },
+        { L"DpcCount", 0 },
+        { L"CompleteCount", 0 },
+        { L"CommandPhaseCount", 0 },
+        { L"StartTransferCount", 0 },
+        { L"BusyRejectCount", 0 },
+        { L"CardDetectCount", 0 },
+        { L"LastRequestType", 0 },
+        { L"LastCommand", 0 },
+        { L"LastArgument", 0 },
+        { L"LastResponseType", 0 },
+        { L"LastTransferType", 0 },
+        { L"LastDirection", 0 },
+        { L"LastBlockSize", 0 },
+        { L"LastBlockCount", 0 },
+        { L"LastLength", 0 },
+        { L"LastRequiredEvents", 0 },
+        { L"LastEvents", 0 },
+        { L"LastErrors", 0 },
+        { L"LastRawInterrupt", 0 },
+        { L"LastIntEnable", 0 },
+        { L"LastSdcStatus", 0 },
+        { L"LastFifoStatus", 0 },
+        { L"Resp0", 0 },
+        { L"Resp1", 0 },
+        { L"Resp2", 0 },
+        { L"Resp3", 0 },
+        { L"LastCompletionStatus", 0 },
+        { L"LastTimeoutStage", 0 },
+        { L"LastCardPresent", 0 },
+        { L"CurrentClockHz", 0 },
+        { L"CurrentBusWidth", 0 }
+    };
+    HANDLE Key;
+    ULONG CharacterIndex;
+    ULONG Index;
+    WCHAR NameBuffer[64];
+    UNICODE_STRING Name;
+
+    Extension = (PMTK_MSDC_EXTENSION)Parameter;
+    if (Extension == NULL || gMtkMsdcRegistryPath.Buffer == NULL) {
+        if (Extension != NULL) {
+            InterlockedExchange(&Extension->DiagWorkQueued, 0);
+        }
+        return;
+    }
+
+    Values[0].Value = (ULONG)Extension->DiagIssueCount;
+    Values[1].Value = (ULONG)Extension->DiagIsrCount;
+    Values[2].Value = (ULONG)Extension->DiagDpcCount;
+    Values[3].Value = (ULONG)Extension->DiagCompleteCount;
+    Values[4].Value = (ULONG)Extension->DiagCommandPhaseCount;
+    Values[5].Value = (ULONG)Extension->DiagStartTransferCount;
+    Values[6].Value = (ULONG)Extension->DiagBusyRejectCount;
+    Values[7].Value = (ULONG)Extension->DiagCardDetectCount;
+    Values[8].Value = Extension->DiagLastRequestType;
+    Values[9].Value = Extension->DiagLastCommand;
+    Values[10].Value = Extension->DiagLastArgument;
+    Values[11].Value = Extension->DiagLastResponseType;
+    Values[12].Value = Extension->DiagLastTransferType;
+    Values[13].Value = Extension->DiagLastDirection;
+    Values[14].Value = Extension->DiagLastBlockSize;
+    Values[15].Value = Extension->DiagLastBlockCount;
+    Values[16].Value = Extension->DiagLastLength;
+    Values[17].Value = Extension->DiagLastRequiredEvents;
+    Values[18].Value = Extension->DiagLastEvents;
+    Values[19].Value = Extension->DiagLastErrors;
+    Values[20].Value = Extension->DiagLastRawInterrupt;
+    Values[21].Value = Extension->DiagLastIntEnable;
+    Values[22].Value = Extension->DiagLastSdcStatus;
+    Values[23].Value = Extension->DiagLastFifoStatus;
+    Values[24].Value = Extension->Response[0];
+    Values[25].Value = Extension->Response[1];
+    Values[26].Value = Extension->Response[2];
+    Values[27].Value = Extension->Response[3];
+    Values[28].Value = Extension->DiagLastCompletionStatus;
+    Values[29].Value = Extension->DiagLastTimeoutStage;
+    Values[30].Value = Extension->DiagLastCardPresent;
+    Values[31].Value = Extension->CurrentClockHz;
+    Values[32].Value = Extension->DiagCurrentBusWidth;
+
+    InitializeObjectAttributes(&Attributes,
+                               &gMtkMsdcRegistryPath,
+                               OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+                               NULL,
+                               NULL);
+    if (NT_SUCCESS(ZwOpenKey(&Key, KEY_SET_VALUE, &Attributes))) {
+        for (Index = 0; Index < RTL_NUMBER_OF(Values); Index += 1) {
+            NameBuffer[0] = L'D';
+            NameBuffer[1] = L'i';
+            NameBuffer[2] = L'a';
+            NameBuffer[3] = L'g';
+            NameBuffer[4] = L'H';
+            NameBuffer[5] = (WCHAR)(L'0' + Extension->HostIndex);
+            for (CharacterIndex = 0;
+                 CharacterIndex + 7 < RTL_NUMBER_OF(NameBuffer) &&
+                 Values[Index].Name[CharacterIndex] != L'\0';
+                 CharacterIndex += 1) {
+                NameBuffer[6 + CharacterIndex] =
+                    Values[Index].Name[CharacterIndex];
+            }
+            NameBuffer[6 + CharacterIndex] = L'\0';
+            if (Values[Index].Name[CharacterIndex] == L'\0') {
+                RtlInitUnicodeString(&Name, NameBuffer);
+                (VOID)ZwSetValueKey(Key,
+                                    &Name,
+                                    0,
+                                    REG_DWORD,
+                                    &Values[Index].Value,
+                                    sizeof(Values[Index].Value));
+            }
+        }
+        ZwClose(Key);
+    }
+
+    InterlockedExchange(&Extension->DiagWorkQueued, 0);
+}
+
+static VOID
+MtkMsdcQueueDiagWork(
+    _In_ PMTK_MSDC_EXTENSION Extension
+    )
+{
+    if (Extension->CrashdumpMode == FALSE &&
+        gMtkMsdcRegistryPath.Buffer != NULL &&
+        InterlockedCompareExchange(&Extension->DiagWorkQueued, 1, 0) == 0) {
+        ExQueueWorkItem(&Extension->DiagWorkItem, DelayedWorkQueue);
+    }
+}
 
 static __forceinline ULONG
 MtkMsdcRead(
@@ -311,6 +459,7 @@ MtkMsdcSetBusWidth(
     Value &= ~SDC_CFG_BUS_WIDTH_MASK;
     Value |= EncodedWidth << SDC_CFG_BUS_WIDTH_SHIFT;
     MtkMsdcWrite(Extension, SDC_CFG, Value);
+    Extension->DiagCurrentBusWidth = (ULONG)Width;
     return STATUS_SUCCESS;
 }
 
@@ -469,7 +618,6 @@ MtkMsdcIssueCommand(
                 ? SDPORT_EVENT_BUFFER_FULL
                 : SDPORT_EVENT_BUFFER_EMPTY;
     }
-    Request->Status = STATUS_PENDING;
     MtkMsdcSetBits(Extension, MSDC_INTEN, MSDC_INT_CMD_STATUS);
     MtkMsdcWrite(Extension, SDC_ARG, Command->Argument);
     MtkMsdcWrite(Extension, SDC_CMD, RawCommand);
@@ -708,6 +856,22 @@ DriverEntry(
 {
     SDPORT_INITIALIZATION_DATA InitializationData;
 
+    if (RegistryPath == NULL || RegistryPath->Buffer == NULL ||
+        RegistryPath->Length + sizeof(WCHAR) >
+            sizeof(gMtkMsdcRegistryPathBuffer)) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    RtlZeroMemory(gMtkMsdcRegistryPathBuffer,
+                  sizeof(gMtkMsdcRegistryPathBuffer));
+    RtlCopyMemory(gMtkMsdcRegistryPathBuffer,
+                  RegistryPath->Buffer,
+                  RegistryPath->Length);
+    gMtkMsdcRegistryPath.Buffer = gMtkMsdcRegistryPathBuffer;
+    gMtkMsdcRegistryPath.Length = RegistryPath->Length;
+    gMtkMsdcRegistryPath.MaximumLength =
+        (USHORT)sizeof(gMtkMsdcRegistryPathBuffer);
+
     RtlZeroMemory(&InitializationData, sizeof(InitializationData));
     InitializationData.StructureSize = sizeof(InitializationData);
     InitializationData.GetSlotCount = MtkMsdcGetSlotCount;
@@ -806,6 +970,9 @@ MtkMsdcInitialize(
      */
     Extension->CurrentClockHz = 20000000;
     Extension->OutstandingRequest = NULL;
+    ExInitializeWorkItem(&Extension->DiagWorkItem,
+                         MtkMsdcDiagWorker,
+                         Extension);
 
     RtlZeroMemory(&Extension->Capabilities,
                   sizeof(Extension->Capabilities));
@@ -956,6 +1123,10 @@ MtkMsdcGetCardDetectState(
         return FALSE;
     }
 
+    InterlockedIncrement(&Extension->DiagCardDetectCount);
+    Extension->DiagLastCardPresent = TRUE;
+    MtkMsdcQueueDiagWork(Extension);
+
     /*
      * MSDC0 is soldered eMMC. MSDC1 uses external GPIO18 rather than
      * MSDC_PS.CDSTS; until GpioClx support lands, the removable controller is
@@ -985,7 +1156,9 @@ MtkMsdcInterrupt(
     )
 {
     PMTK_MSDC_EXTENSION Extension;
+    ULONG Enabled;
     ULONG Pending;
+    ULONG Raw;
 
     Extension = (PMTK_MSDC_EXTENSION)PrivateExtension;
     *Events = 0;
@@ -994,11 +1167,16 @@ MtkMsdcInterrupt(
     *NotifySdioInterrupt = FALSE;
     *NotifyTuning = FALSE;
 
-    Pending = MtkMsdcRead(Extension, MSDC_INT) &
-              MtkMsdcRead(Extension, MSDC_INTEN);
+    Raw = MtkMsdcRead(Extension, MSDC_INT);
+    Enabled = MtkMsdcRead(Extension, MSDC_INTEN);
+    Pending = Raw & Enabled;
     if (Pending == 0) {
         return FALSE;
     }
+
+    InterlockedIncrement(&Extension->DiagIsrCount);
+    Extension->DiagLastRawInterrupt = Raw;
+    Extension->DiagLastIntEnable = Enabled;
 
     if ((Pending & MSDC_INT_CMDRDY) != 0) {
         PSDPORT_REQUEST Outstanding;
@@ -1030,6 +1208,10 @@ MtkMsdcInterrupt(
     }
 
     *Errors = MtkMsdcErrorsFromInterrupt(Pending);
+    Extension->DiagLastEvents = *Events;
+    Extension->DiagLastErrors = *Errors;
+    Extension->DiagLastSdcStatus = MtkMsdcRead(Extension, SDC_STS);
+    Extension->DiagLastFifoStatus = MtkMsdcRead(Extension, MSDC_FIFOCS);
     MtkMsdcWrite(Extension, MSDC_INT, Pending);
     if (*Errors != 0) {
         *Events |= SDPORT_EVENT_ERROR;
@@ -1053,13 +1235,30 @@ MtkMsdcIssueRequest(
     }
     Extension = (PMTK_MSDC_EXTENSION)PrivateExtension;
 
+    InterlockedIncrement(&Extension->DiagIssueCount);
+    Extension->DiagLastRequestType = (ULONG)Request->Type;
+    Extension->DiagLastCommand = Request->Command.Index;
+    Extension->DiagLastArgument = Request->Command.Argument;
+    Extension->DiagLastResponseType = (ULONG)Request->Command.ResponseType;
+    Extension->DiagLastTransferType = (ULONG)Request->Command.TransferType;
+    Extension->DiagLastDirection =
+        (ULONG)Request->Command.TransferDirection;
+    Extension->DiagLastBlockSize = Request->Command.BlockSize;
+    Extension->DiagLastBlockCount = Request->Command.BlockCount;
+    Extension->DiagLastLength = Request->Command.Length;
+
     switch (Request->Type) {
     case SdRequestTypeCommandNoTransfer:
     case SdRequestTypeCommandWithTransfer:
+        InterlockedIncrement(&Extension->DiagCommandPhaseCount);
         if (InterlockedCompareExchangePointer(
                 &Extension->OutstandingRequest,
                 Request,
                 NULL) != NULL) {
+            InterlockedIncrement(&Extension->DiagBusyRejectCount);
+            Extension->DiagLastCompletionStatus =
+                (ULONG)STATUS_DEVICE_BUSY;
+            MtkMsdcQueueDiagWork(Extension);
             return STATUS_DEVICE_BUSY;
         }
 
@@ -1069,22 +1268,37 @@ MtkMsdcIssueRequest(
                 &Extension->OutstandingRequest,
                 NULL,
                 Request);
+            Extension->DiagLastCompletionStatus = (ULONG)Status;
+            if (Status == STATUS_IO_TIMEOUT) {
+                Extension->DiagLastTimeoutStage = 1;
+            }
+            MtkMsdcQueueDiagWork(Extension);
         }
         return Status;
 
     case SdRequestTypeStartTransfer:
+        InterlockedIncrement(&Extension->DiagStartTransferCount);
         /*
-         * The buffer-ready event advances the same outstanding PIO request
-         * into its StartTransfer phase.  Ownership remains with this request
-         * until the latched transfer-complete interrupt reaches RequestDpc.
+         * SDPORT presents StartTransfer as a new IssueRequest phase after the
+         * command-with-transfer phase has been completed back to the port
+         * driver.  Acquire fresh ownership for this phase; retaining command
+         * ownership here prevents SDPORT from advancing the request.
          */
         if (InterlockedCompareExchangePointer(
                 &Extension->OutstandingRequest,
                 Request,
-                Request) != Request) {
-            return STATUS_INVALID_DEVICE_STATE;
+                NULL) != NULL) {
+            InterlockedIncrement(&Extension->DiagBusyRejectCount);
+            Extension->DiagLastCompletionStatus =
+                (ULONG)STATUS_DEVICE_BUSY;
+            MtkMsdcQueueDiagWork(Extension);
+            return STATUS_DEVICE_BUSY;
         }
         Status = MtkMsdcStartTransfer(Extension, Request);
+        Extension->DiagLastRawInterrupt = MtkMsdcRead(Extension, MSDC_INT);
+        Extension->DiagLastIntEnable = MtkMsdcRead(Extension, MSDC_INTEN);
+        Extension->DiagLastSdcStatus = MtkMsdcRead(Extension, SDC_STS);
+        Extension->DiagLastFifoStatus = MtkMsdcRead(Extension, MSDC_FIFOCS);
         if (NT_SUCCESS(Status)) {
             /*
              * PIO observed transfer completion but deliberately left the MTK
@@ -1092,8 +1306,10 @@ MtkMsdcIssueRequest(
              * the one asynchronous completion path through RequestDpc.
              */
             Request->RequiredEvents = SDPORT_EVENT_CARD_RW_END;
-            Request->Status = STATUS_PENDING;
+            Request->Status = STATUS_SUCCESS;
             MtkMsdcSetBits(Extension, MSDC_INTEN, MSDC_INT_DATA_STATUS);
+            Extension->DiagLastRequiredEvents = Request->RequiredEvents;
+            MtkMsdcQueueDiagWork(Extension);
             return STATUS_PENDING;
         }
 
@@ -1104,6 +1320,11 @@ MtkMsdcIssueRequest(
             &Extension->OutstandingRequest,
             NULL,
             Request);
+        Extension->DiagLastCompletionStatus = (ULONG)Status;
+        if (Status == STATUS_IO_TIMEOUT) {
+            Extension->DiagLastTimeoutStage = 2;
+        }
+        MtkMsdcQueueDiagWork(Extension);
         return Status;
 
     default:
@@ -1162,7 +1383,6 @@ MtkMsdcRequestDpc(
     ULONG Errors
     )
 {
-    BOOLEAN CommandTransferEvent;
     PMTK_MSDC_EXTENSION Extension;
     NTSTATUS Status;
 
@@ -1171,6 +1391,10 @@ MtkMsdcRequestDpc(
     }
 
     Extension = (PMTK_MSDC_EXTENSION)PrivateExtension;
+    InterlockedIncrement(&Extension->DiagDpcCount);
+    Extension->DiagLastEvents = Events;
+    Extension->DiagLastErrors = Errors;
+    Extension->DiagLastRequiredEvents = Request->RequiredEvents;
     if (InterlockedCompareExchangePointer(
             &Extension->OutstandingRequest,
             Request,
@@ -1179,10 +1403,6 @@ MtkMsdcRequestDpc(
     }
 
     Request->RequiredEvents &= ~Events;
-    CommandTransferEvent =
-        (Events & SDPORT_EVENT_CARD_RESPONSE) != 0 &&
-        Request->Command.TransferType != SdTransferTypeNone &&
-        Request->Command.TransferType != SdTransferTypeUndefined;
 
     if (Errors != 0) {
         Request->RequiredEvents = 0;
@@ -1209,30 +1429,37 @@ MtkMsdcRequestDpc(
         }
     }
 
-    /*
-     * CARD_RESPONSE plus the synthetic FIFO-ready event is a phase boundary,
-     * not completion of a PIO command.  SDPORT now calls StartTransfer for
-     * this same request; its latched XFER_COMPL interrupt is the sole success
-     * completion below.
-     */
-    if (NT_SUCCESS(Status) &&
-        CommandTransferEvent &&
-        (Events & SDPORT_EVENT_CARD_RW_END) == 0) {
-        Request->Status = STATUS_PENDING;
-        return;
-    }
-
     if (!NT_SUCCESS(Status) || Request->RequiredEvents == 0) {
         MtkMsdcClearBits(Extension,
                          MSDC_INTEN,
                          MSDC_INT_CMD_STATUS | MSDC_INT_DATA_STATUS);
         Request->RequiredEvents = 0;
-        Request->Status = Status;
+        if (!NT_SUCCESS(Status)) {
+            Request->Status = Status;
+        } else if (Request->Status != STATUS_MORE_PROCESSING_REQUIRED) {
+            Request->Status = STATUS_SUCCESS;
+        }
         if (InterlockedCompareExchangePointer(
                 &Extension->OutstandingRequest,
                 NULL,
                 Request) == Request) {
-            SdPortCompleteRequest(Request, Status);
+            InterlockedIncrement(&Extension->DiagCompleteCount);
+            Extension->DiagLastCompletionStatus =
+                (ULONG)Request->Status;
+            Extension->DiagLastRequiredEvents = Request->RequiredEvents;
+            Extension->DiagLastRawInterrupt =
+                MtkMsdcRead(Extension, MSDC_INT);
+            Extension->DiagLastIntEnable =
+                MtkMsdcRead(Extension, MSDC_INTEN);
+            Extension->DiagLastSdcStatus =
+                MtkMsdcRead(Extension, SDC_STS);
+            Extension->DiagLastFifoStatus =
+                MtkMsdcRead(Extension, MSDC_FIFOCS);
+            if (Request->Status == STATUS_IO_TIMEOUT) {
+                Extension->DiagLastTimeoutStage = 3;
+            }
+            MtkMsdcQueueDiagWork(Extension);
+            SdPortCompleteRequest(Request, Request->Status);
         }
     }
 }
