@@ -570,6 +570,38 @@ MtkMsdcCaptureResponse(
 }
 
 static NTSTATUS
+MtkMsdcPollCommandCompletion(
+    _In_ PMTK_MSDC_EXTENSION Extension,
+    _Out_ PULONG InterruptStatus
+    )
+{
+    ULONG Pending;
+    ULONG Poll;
+
+    *InterruptStatus = 0;
+    for (Poll = 0; Poll < MTK_MSDC_COMMAND_TIMEOUT_US; Poll += 1) {
+        Pending = MtkMsdcRead(Extension, MSDC_INT) & MSDC_INT_CMD_STATUS;
+        if (Pending != 0) {
+            *InterruptStatus = Pending;
+            MtkMsdcWrite(Extension, MSDC_INT, Pending);
+
+            if ((Pending & MSDC_INT_CMD_ERROR) != 0) {
+                return MtkMsdcStatusFromInterrupt(Pending);
+            }
+
+            if ((Pending & MSDC_INT_CMDRDY) != 0) {
+                MtkMsdcCaptureResponse(Extension);
+                return STATUS_SUCCESS;
+            }
+        }
+
+        SdPortWait(1);
+    }
+
+    return STATUS_IO_TIMEOUT;
+}
+
+static NTSTATUS
 MtkMsdcIssueCommand(
     _In_ PMTK_MSDC_EXTENSION Extension,
     _Inout_ PSDPORT_REQUEST Request
@@ -580,6 +612,7 @@ MtkMsdcIssueCommand(
     BOOLEAN WaitForData;
     NTSTATUS Status;
     ULONG BlockCount;
+    ULONG InterruptStatus;
     ULONG RawCommand;
     ULONG ResponseEncoding;
     ULONG RxCount;
@@ -680,8 +713,35 @@ MtkMsdcIssueCommand(
                 ? SDPORT_EVENT_BUFFER_FULL
                 : SDPORT_EVENT_BUFFER_EMPTY;
     }
-    MtkMsdcSetBits(Extension, MSDC_INTEN, MSDC_INT_CMD_STATUS);
     MtkMsdcWrite(Extension, SDC_ARG, Command->Argument);
+
+    /*
+     * MSDC0 has repeatedly failed to deliver the interrupt edge for eMMC
+     * CMD3 even though every preceding command completes normally.  Do this
+     * one short command synchronously, before SDPORT records it as pending.
+     * This both preserves the response and guarantees that a missing edge can
+     * delay enumeration for at most the miniport command timeout instead of
+     * wedging sdbus for roughly 30 seconds.
+     */
+    if (Extension->IsEmmc != FALSE &&
+        Command->Index == 3 &&
+        HasData == FALSE) {
+        MtkMsdcWrite(Extension, SDC_CMD, RawCommand);
+        Status = MtkMsdcPollCommandCompletion(Extension, &InterruptStatus);
+        Extension->DiagLastRawInterrupt = InterruptStatus;
+        Extension->DiagLastIntEnable = MtkMsdcRead(Extension, MSDC_INTEN);
+        Extension->DiagLastSdcStatus = MtkMsdcRead(Extension, SDC_STS);
+        Extension->DiagLastFifoStatus = MtkMsdcRead(Extension, MSDC_FIFOCS);
+        Request->RequiredEvents = 0;
+        Request->Status = Status;
+
+        if (!NT_SUCCESS(Status)) {
+            (VOID)MtkMsdcRecover(Extension);
+        }
+        return Status;
+    }
+
+    MtkMsdcSetBits(Extension, MSDC_INTEN, MSDC_INT_CMD_STATUS);
     MtkMsdcWrite(Extension, SDC_CMD, RawCommand);
     return STATUS_PENDING;
 }
@@ -1445,29 +1505,23 @@ MtkMsdcGetResponse(
     }
 
     /*
-     * MTK RESP0..3 hold the four unshifted 32-bit R2 payload words, least
-     * significant word first, each stored little-endian in memory.  The
-     * 128-bit CID/CSD payload in wire order (most significant byte first)
-     * is therefore the full 16-byte memory buffer reversed: RESP3's bytes
-     * come first.
+     * MTK RESP0..3 contain the complete 128-bit R2 payload, least-significant
+     * word first.  SDPORT does not consume the canonical wire-order CID/CSD;
+     * it consumes the SDHCI RESPONSE_0..3 register layout.  SDHCI omits the
+     * response CRC/end byte and places response bits 39:8 in register 0,
+     * 71:40 in register 1, and so on.  Compacting the native little-endian MTK
+     * register stream by one byte produces exactly that ABI.
      *
-     * Physical proof from the M2.71 CID dump: reversing the whole buffer
-     * decodes both cards exactly (eMMC MID 0xd6 PNM "A3A562" PRV 1.1,
-     * microSD PNM "SC128" PRV 8.0), matching the hardware IDs sdbus
-     * already published for both PDOs.  The earlier one-byte SDHCI-style
-     * compaction corrupted the copy sdstor reads, so it rejected both
-     * cards with CM_PROB_FAILED_START despite a clean enumeration.
+     * A full 16-byte reversal makes the text fields look human-readable, but
+     * it is the wrong interface layout and causes sdbus to cache malformed
+     * card data; sdstor then fails its first device command with Code 10.
      */
     RtlCopyMemory(RawResponse,
                   Extension->Response,
                   sizeof(RawResponse));
-    {
-        ULONG ByteIndex;
-        for (ByteIndex = 0; ByteIndex < SDPORT_MAX_RESPONSE_LENGTH; ByteIndex += 1) {
-            ((PUCHAR)ResponseBuffer)[ByteIndex] =
-                RawResponse[SDPORT_MAX_RESPONSE_LENGTH - 1 - ByteIndex];
-        }
-    }
+    RtlCopyMemory(ResponseBuffer,
+                  RawResponse + 1,
+                  SDPORT_MAX_RESPONSE_LENGTH - 1);
 }
 
 _Use_decl_annotations_
