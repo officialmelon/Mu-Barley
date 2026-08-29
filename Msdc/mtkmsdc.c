@@ -81,6 +81,8 @@ MtkMsdcDiagWorker(
         { L"Snap2R0", 0 }, { L"Snap2R1", 0 }, { L"Snap2R2", 0 }, { L"Snap2R3", 0 },
         { L"Snap3R0", 0 }, { L"Snap3R1", 0 }, { L"Snap3R2", 0 }, { L"Snap3R3", 0 },
         { L"Gr2Idx", 0 }, { L"Gr2R0", 0 }, { L"Gr2R1", 0 }, { L"Gr2R2", 0 }, { L"Gr2R3", 0 },
+        { L"OcrValue", 0 },
+        { L"CsdRepaired", 0 },
         { L"TraceSequence", 0 }
     };
     HANDLE Key;
@@ -168,7 +170,9 @@ MtkMsdcDiagWorker(
     Values[68].Value = Extension->DiagGr2Resp[1];
     Values[69].Value = Extension->DiagGr2Resp[2];
     Values[70].Value = Extension->DiagGr2Resp[3];
-    Values[71].Value = (ULONG)Extension->DiagTraceSequence;
+    Values[71].Value = Extension->DiagOcrValue;
+    Values[72].Value = Extension->DiagCsdRepaired;
+    Values[73].Value = (ULONG)Extension->DiagTraceSequence;
 
     InitializeObjectAttributes(&Attributes,
                                &gMtkMsdcRegistryPath,
@@ -1631,6 +1635,26 @@ MtkMsdcGetResponse(
      * exercised end to end.
      */
     UNREFERENCED_PARAMETER(RawResponse);
+    if (Command->ResponseType == SdResponseTypeR2 &&
+        Command->Index == 9 &&
+        Extension->IsEmmc == FALSE &&
+        (Extension->DiagOcrValue & 0x40000000) != 0) {
+        PUCHAR Out = (PUCHAR)ResponseBuffer;
+        /*
+         * Wire response head repair: the first bytes of long responses get
+         * corrupted on this host (CID head nibble-shifted; CSD byte 0
+         * delivering 0x40 instead of 0x00).  A card whose OCR reports
+         * CCS=1 is SDHC/SDXC/SDUC and must present a CSD v2 (structure
+         * 00).  A captured structure of 01 is that head corruption; clear
+         * it so SDPORT parses the true geometry (C_SIZE 0x03b8ab =
+         * 119.5 GiB on this card) instead of a nonsense 30 KB v1 card
+         * that sdstor correctly refuses.
+         */
+        if ((Out[0] >> 6) == 1) {
+            Out[0] = (UCHAR)(Out[0] & 0x3F);
+            Extension->DiagCsdRepaired = 1;
+        }
+    }
     Extension->DiagGr2Index = Command->Index;
     Extension->DiagGr2Resp[0] = MtkMsdcRead(Extension, SDC_RESP0);
     Extension->DiagGr2Resp[1] = MtkMsdcRead(Extension, SDC_RESP1);
@@ -1690,6 +1714,10 @@ MtkMsdcRequestDpc(
         Status = STATUS_SUCCESS;
         if ((Events & SDPORT_EVENT_CARD_RESPONSE) != 0) {
             MtkMsdcCaptureResponse(Extension);
+            if (Request->Command.Index == 41 &&
+                Request->Command.ResponseType == SdResponseTypeR3) {
+                Extension->DiagOcrValue = Extension->Response[0];
+            }
             if (Request->Command.ResponseType == SdResponseTypeR2) {
                 if (Request->Command.Index == 2) {
                     RtlCopyMemory(Extension->DiagCidResponse,
