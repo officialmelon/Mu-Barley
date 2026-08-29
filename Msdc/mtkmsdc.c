@@ -1446,22 +1446,28 @@ MtkMsdcGetResponse(
 
     /*
      * MTK RESP0..3 hold the four unshifted 32-bit R2 payload words, least
-     * significant word first.  SDPORT consumes the SDHCI RESPONSE_0..3
-     * register layout instead: response bits 39:8 occupy word 0, bits 71:40
-     * occupy word 1, and so on.  Compacting the native little-endian MTK byte
-     * stream by one byte produces that exact layout.
+     * significant word first, each stored little-endian in memory.  The
+     * 128-bit CID/CSD payload in wire order (most significant byte first)
+     * is therefore the full 16-byte memory buffer reversed: RESP3's bytes
+     * come first.
      *
-     * Do not reverse the words into Linux mmc_core order here.  Linux numbers
-     * resp[0] as the most-significant word; SDPORT numbers response register 0
-     * first.  Both CID and CSD otherwise parse with impossible fields and the
-     * port driver reaches CMD7 but refuses to create a child disk.
+     * Physical proof from the M2.71 CID dump: reversing the whole buffer
+     * decodes both cards exactly (eMMC MID 0xd6 PNM "A3A562" PRV 1.1,
+     * microSD PNM "SC128" PRV 8.0), matching the hardware IDs sdbus
+     * already published for both PDOs.  The earlier one-byte SDHCI-style
+     * compaction corrupted the copy sdstor reads, so it rejected both
+     * cards with CM_PROB_FAILED_START despite a clean enumeration.
      */
     RtlCopyMemory(RawResponse,
                   Extension->Response,
                   sizeof(RawResponse));
-    RtlCopyMemory(ResponseBuffer,
-                  RawResponse + 1,
-                  SDPORT_MAX_RESPONSE_LENGTH - 1);
+    {
+        ULONG ByteIndex;
+        for (ByteIndex = 0; ByteIndex < SDPORT_MAX_RESPONSE_LENGTH; ByteIndex += 1) {
+            ((PUCHAR)ResponseBuffer)[ByteIndex] =
+                RawResponse[SDPORT_MAX_RESPONSE_LENGTH - 1 - ByteIndex];
+        }
+    }
 }
 
 _Use_decl_annotations_
