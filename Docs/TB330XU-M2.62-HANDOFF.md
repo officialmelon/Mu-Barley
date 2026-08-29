@@ -60,6 +60,44 @@ Interpretation:
   contract, command completion, or MT6768 controller/card initialization. Do not return
   to unrelated touchscreen feature work until storage enumeration is understood.
 
+## M2.63 follow-up result and M2.64 trace build
+
+The M2.63 storage 0.7.0 experiment corrected SDPORT phase completion: a completed
+command-with-transfer phase is returned through `SdPortCompleteRequest`, and the later
+`SdRequestTypeStartTransfer` invocation acquires fresh outstanding ownership. It did
+not create disks or volumes by itself.
+
+Observed M2.63 `diskpart` durations were deterministic:
+
+- `1:03:46.95` to `1:04:22.60`: 35.65 seconds.
+- `1:03:48.04` to `1:04:23.67`: 35.63 seconds.
+
+This strongly indicates a bounded timeout/retry sequence. Both MT6768 hosts still
+reported Started. The exact last command was not visible in M2.63.
+
+The M2.63 unconditional GPIO reset at every Himax D0 entry physically regressed touch,
+and volume/power input was also unavailable in that image. That touch experiment has
+been removed. M2.64 restores the exact M2.62 cold-working touch SYS and the exact
+M2.56.2 physical-key package.
+
+The `windows-drivers` branch commit `044208d` contains storage 0.8.0. It retains the
+phase correction and adds bounded per-host in-memory snapshots. A system work item
+flushes the snapshot to the service registry at PASSIVE_LEVEL; interrupt and DPC paths
+perform no registry I/O. Values use `DiagH0...` for eMMC and `DiagH1...` for microSD.
+
+M2.64 trace WIM:
+
+- Size: `471082435` bytes.
+- SHA-256: `23C82559FB54AF6637F1C51118D8A919EFD20167275D2766649139AB9CC32405`.
+- Storage SYS SHA-256: `C1C96491DD41C028081006A98261F89CDF5AEE53B1C4906CDBCD8601D5CE7965`.
+- Storage CAT SHA-256: `1BDBC992D90FBC6FF5A13E315FB538A50FA8759E73D46D4B7006AE6C3974B0FB`.
+- Restored touch SYS SHA-256: `0C7608D355E7BCFF2D51EACEDFDA45E8981BF83CEFAFD6A33767E8C96790736E`.
+
+The M2.64 screen script measures `diskpart` start/end time and then shows separate H0
+and H1 counters, last request/command/argument, events, errors, raw interrupt state,
+SDC/FIFO status, completion status, timeout stage, clock, and bus width. Testing remains
+strictly read-only.
+
 ## M2.62 firmware changes (`main`)
 
 Relevant files:
@@ -245,4 +283,3 @@ MSDC command/interrupt behavior. Produce a concrete patch plan tied to functions
 request phases, with special attention to card-detect notification, CMD0/CMD8/ACMD41
 or CMD1 sequencing, R2 response layout, PIO preparation, timeout cancellation, and
 exactly-once completion.
-
