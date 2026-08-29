@@ -76,6 +76,11 @@ MtkMsdcDiagWorker(
         { L"CsdCrcOk", 0 },
         { L"CsdStruct", 0 },
         { L"CsdCapKb", 0 },
+        { L"Snap0R0", 0 }, { L"Snap0R1", 0 }, { L"Snap0R2", 0 }, { L"Snap0R3", 0 },
+        { L"Snap1R0", 0 }, { L"Snap1R1", 0 }, { L"Snap1R2", 0 }, { L"Snap1R3", 0 },
+        { L"Snap2R0", 0 }, { L"Snap2R1", 0 }, { L"Snap2R2", 0 }, { L"Snap2R3", 0 },
+        { L"Snap3R0", 0 }, { L"Snap3R1", 0 }, { L"Snap3R2", 0 }, { L"Snap3R3", 0 },
+        { L"Gr2Idx", 0 }, { L"Gr2R0", 0 }, { L"Gr2R1", 0 }, { L"Gr2R2", 0 }, { L"Gr2R3", 0 },
         { L"TraceSequence", 0 }
     };
     HANDLE Key;
@@ -142,7 +147,28 @@ MtkMsdcDiagWorker(
     Values[47].Value = Extension->DiagCsdCrcOk;
     Values[48].Value = Extension->DiagCsdStructure;
     Values[49].Value = Extension->DiagCsdCapKb;
-    Values[50].Value = (ULONG)Extension->DiagTraceSequence;
+    Values[50].Value = Extension->DiagSnap[0][0];
+    Values[51].Value = Extension->DiagSnap[0][1];
+    Values[52].Value = Extension->DiagSnap[0][2];
+    Values[53].Value = Extension->DiagSnap[0][3];
+    Values[54].Value = Extension->DiagSnap[1][0];
+    Values[55].Value = Extension->DiagSnap[1][1];
+    Values[56].Value = Extension->DiagSnap[1][2];
+    Values[57].Value = Extension->DiagSnap[1][3];
+    Values[58].Value = Extension->DiagSnap[2][0];
+    Values[59].Value = Extension->DiagSnap[2][1];
+    Values[60].Value = Extension->DiagSnap[2][2];
+    Values[61].Value = Extension->DiagSnap[2][3];
+    Values[62].Value = Extension->DiagSnap[3][0];
+    Values[63].Value = Extension->DiagSnap[3][1];
+    Values[64].Value = Extension->DiagSnap[3][2];
+    Values[65].Value = Extension->DiagSnap[3][3];
+    Values[66].Value = Extension->DiagGr2Index;
+    Values[67].Value = Extension->DiagGr2Resp[0];
+    Values[68].Value = Extension->DiagGr2Resp[1];
+    Values[69].Value = Extension->DiagGr2Resp[2];
+    Values[70].Value = Extension->DiagGr2Resp[3];
+    Values[71].Value = (ULONG)Extension->DiagTraceSequence;
 
     InitializeObjectAttributes(&Attributes,
                                &gMtkMsdcRegistryPath,
@@ -1605,6 +1631,11 @@ MtkMsdcGetResponse(
      * exercised end to end.
      */
     UNREFERENCED_PARAMETER(RawResponse);
+    Extension->DiagGr2Index = Command->Index;
+    Extension->DiagGr2Resp[0] = MtkMsdcRead(Extension, SDC_RESP0);
+    Extension->DiagGr2Resp[1] = MtkMsdcRead(Extension, SDC_RESP1);
+    Extension->DiagGr2Resp[2] = MtkMsdcRead(Extension, SDC_RESP2);
+    Extension->DiagGr2Resp[3] = MtkMsdcRead(Extension, SDC_RESP3);
     RtlCopyMemory(ResponseBuffer,
                   Extension->Response,
                   sizeof(Extension->Response));
@@ -1670,16 +1701,25 @@ MtkMsdcRequestDpc(
                                   Extension->Response,
                                   sizeof(Extension->DiagCsdResponse));
                     MtkMsdcValidateR2(Extension, 9);
-                    /* Latch check: re-read the registers 200 us later. */
-                    SdPortWait(200);
-                    Extension->DiagCsdLateResponse[0] =
-                        MtkMsdcRead(Extension, SDC_RESP0);
-                    Extension->DiagCsdLateResponse[1] =
-                        MtkMsdcRead(Extension, SDC_RESP1);
-                    Extension->DiagCsdLateResponse[2] =
-                        MtkMsdcRead(Extension, SDC_RESP2);
-                    Extension->DiagCsdLateResponse[3] =
-                        MtkMsdcRead(Extension, SDC_RESP3);
+                }
+                if (Request->Command.Index == 2 ||
+                    Request->Command.Index == 9) {
+                    /*
+                     * Latch-timing instrument: re-read the response registers
+                     * at 25/100/300/1000 us.  The CMD2 capture has shown a
+                     * 4-bit head shift in RESP3 that CRC proves wrong, so
+                     * find when the registers hold the true bytes.
+                     */
+                    static const ULONG SnapDelayUs[4] = { 25, 100, 300, 1000 };
+                    ULONG DelayIndex;
+                    ULONG RegIndex;
+                    for (DelayIndex = 0; DelayIndex < 4; DelayIndex += 1) {
+                        SdPortWait(SnapDelayUs[DelayIndex]);
+                        for (RegIndex = 0; RegIndex < 4; RegIndex += 1) {
+                            Extension->DiagSnap[DelayIndex][RegIndex] =
+                                MtkMsdcRead(Extension, SDC_RESP0 + RegIndex * 4);
+                        }
+                    }
                 }
             }
             MtkMsdcClearBits(Extension, MSDC_INTEN, MSDC_INT_CMD_STATUS);
