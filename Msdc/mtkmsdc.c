@@ -1358,6 +1358,7 @@ MtkMsdcGetResponse(
     )
 {
     PMTK_MSDC_EXTENSION Extension;
+    UCHAR RawResponse[SDPORT_MAX_RESPONSE_LENGTH];
     Extension = (PMTK_MSDC_EXTENSION)PrivateExtension;
     RtlZeroMemory(ResponseBuffer, SDPORT_MAX_RESPONSE_LENGTH);
 
@@ -1372,19 +1373,23 @@ MtkMsdcGetResponse(
     }
 
     /*
-     * SDPORT expects the same least-significant-word-first layout exposed by
-     * SDHCI RESPONSE_0..3.  Linux's MMC core uses the opposite logical array
-     * convention (cmd->resp[0] is the most-significant word), which is why
-     * upstream mtk-sd.c reads MTK RESP3..0 into Linux resp[0]..resp[3].
-     * Copying that Linux ordering into SDPORT reverses every CID and CSD.
+     * MTK RESP0..3 hold the four unshifted 32-bit R2 payload words, least
+     * significant word first.  SDPORT consumes the SDHCI RESPONSE_0..3
+     * register layout instead: response bits 39:8 occupy word 0, bits 71:40
+     * occupy word 1, and so on.  Compacting the native little-endian MTK byte
+     * stream by one byte produces that exact layout.
      *
-     * MTK RESP0 already corresponds to SDHCI RESPONSE_0 semantics.  Deliver
-     * RESP0..3 unchanged, and do not apply SDHCI's controller-specific byte
-     * compaction to this non-SDHCI controller.
+     * Do not reverse the words into Linux mmc_core order here.  Linux numbers
+     * resp[0] as the most-significant word; SDPORT numbers response register 0
+     * first.  Both CID and CSD otherwise parse with impossible fields and the
+     * port driver reaches CMD7 but refuses to create a child disk.
      */
-    RtlCopyMemory(ResponseBuffer,
+    RtlCopyMemory(RawResponse,
                   Extension->Response,
-                  sizeof(Extension->Response));
+                  sizeof(RawResponse));
+    RtlCopyMemory(ResponseBuffer,
+                  RawResponse + 1,
+                  SDPORT_MAX_RESPONSE_LENGTH - 1);
 }
 
 _Use_decl_annotations_
