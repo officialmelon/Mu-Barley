@@ -1729,6 +1729,19 @@ MtkMsdcRequestDpc(
                                   Extension->Response,
                                   sizeof(Extension->DiagCsdResponse));
                     MtkMsdcValidateR2(Extension, 9);
+                    if (Extension->IsEmmc == FALSE &&
+                        (Extension->DiagOcrValue & 0x40000000) != 0 &&
+                        (Extension->Response[3] >> 30) == 1) {
+                        /*
+                         * Repair at the source: RESP3's top two bits are
+                         * CSD[127:126] (structure).  An SDHC/SDXC card must
+                         * be 00; the observed 01 is the corrupted head bit.
+                         * Fix the master copy so every consumer (GetResponse
+                         * included) sees the true v2 CSD.
+                         */
+                        Extension->Response[3] &= 0x3FFFFFFF;
+                        Extension->DiagCsdRepaired = 1;
+                    }
                 }
                 if (Request->Command.Index == 2 ||
                     Request->Command.Index == 9) {
