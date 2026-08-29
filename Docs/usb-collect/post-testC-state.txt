@@ -1,0 +1,10 @@
+host
+not attached
+USB=0
+USB-HOST=1
+1-0:1.0
+1-1
+1-1:1.0
+1-1:1.1
+1-1:1.2
+usb1

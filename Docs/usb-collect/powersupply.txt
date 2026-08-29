@@ -1,0 +1,76 @@
+battery
+charger
+mtk-master-charger
+mtk-mst-div-chg
+mtk-mst-hvdiv-chg
+mtk-slave-charger
+mtk-slv-div-chg
+mtk-slv-hvdiv-chg
+===== /sys/class/power_supply/battery
+type = Battery
+present = 1
+voltage_now = 4131000
+current_now = 477000
+status = Charging
+health = Good
+===== /sys/class/power_supply/charger
+type = USB
+online = 1
+voltage_now = 5043
+usb_type = Unknown [SDP] DCP CDP ACA BrickID PD
+status = Charging
+current_max = 500000
+voltage_max = 5000000
+===== /sys/class/power_supply/mtk-master-charger
+type = Unknown
+online = 1
+present = 1
+voltage_now = 5043
+current_now = 1
+usb_type = [Unknown] SDP DCP CDP PD PD_PPS
+voltage_max = 1
+constant_charge_current_max = 3500000
+===== /sys/class/power_supply/mtk-mst-div-chg
+type = Unknown
+online = 0
+present = 0
+voltage_now = 5043
+current_now = 1
+usb_type = [Unknown] SDP DCP CDP PD PD_PPS
+voltage_max = 1
+constant_charge_current_max = -1
+===== /sys/class/power_supply/mtk-mst-hvdiv-chg
+type = Unknown
+online = 0
+present = 0
+voltage_now = 5043
+current_now = 1
+usb_type = [Unknown] SDP DCP CDP PD PD_PPS
+voltage_max = 1
+constant_charge_current_max = -1
+===== /sys/class/power_supply/mtk-slave-charger
+type = Unknown
+online = 1
+voltage_now = 5043
+current_now = 1
+usb_type = [Unknown] SDP DCP CDP PD PD_PPS
+voltage_max = 1
+constant_charge_current_max = -1
+===== /sys/class/power_supply/mtk-slv-div-chg
+type = Unknown
+online = 0
+present = 0
+voltage_now = 5043
+current_now = 1
+usb_type = [Unknown] SDP DCP CDP PD PD_PPS
+voltage_max = 1
+constant_charge_current_max = -1
+===== /sys/class/power_supply/mtk-slv-hvdiv-chg
+type = Unknown
+online = 0
+present = 0
+voltage_now = 5043
+current_now = 1
+usb_type = [Unknown] SDP DCP CDP PD PD_PPS
+voltage_max = 1
+constant_charge_current_max = -1

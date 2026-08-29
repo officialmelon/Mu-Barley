@@ -1,0 +1,2 @@
+ls: /sys/class/extcon/: Permission denied
+== /sys/class/extcon/*

@@ -1,0 +1,12 @@
+                                                                                                           phy-11cc0000.usb-phy.0          ref                      
+                ifr_icusb            1       1        0        156000000   0          0     50000      ?                  deviceless                      of_clk_get_from_provider 
+                                                                                                                          mt_usb                          sys_clk                  
+             univpll3_d4             2       2        0        62400000    0          0     50000      Y               deviceless                      of_clk_get_from_provider 
+                                                                                                                       mt_usb                          src_clk                  
+                usb_top_sel          1       1        0        62400000    0          0     50000      Y                  deviceless                      of_clk_get_from_provider 
+                                                                                                                          mt_usb                          ref_clk                  
+             univpll3_d2             0       0        0        124800000   0          0     50000      Y               deviceless                      of_clk_get_from_provider 
+          usb20_192m_ck              0       0        0        192000000   0          0     50000      Y            deviceless                      of_clk_get_from_provider 
+             usb20_192m_d32          0       0        0        6000000     0          0     50000      Y               1a040000.kd_camera_hw1          CLK_MCLK_6M              
+             usb20_192m_d16          0       0        0        12000000    0          0     50000      Y               1a040000.kd_camera_hw1          CLK_MCLK_12M             
+             usb20_192m_d8           0       0        0        24000000    0          0     50000      Y               1a040000.kd_camera_hw1          CLK_MCLK_24M             

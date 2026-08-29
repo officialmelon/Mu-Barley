@@ -1,0 +1,5 @@
+device
+configured
+USB=1
+USB-HOST=0
+[10789.807818] [wlan][2012]qmFlushTimeoutReorderBubble:(QM INFO) QM:(Bub Timeout) 12:5 Bub(1)[8]{8,71} -> Bub(0)[8]{10,73}

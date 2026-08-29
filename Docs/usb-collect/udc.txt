@@ -1,0 +1,8 @@
+musb-hdrc
+---
+USB_UDC_NAME=musb-hdrc
+USB_UDC_DRIVER=g1
+---
+configured
+---
+g1

@@ -1,0 +1,4 @@
+== /sys/class/extcon/extcon0
+extcon_usb
+USB=1
+USB-HOST=0

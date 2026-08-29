@@ -1,0 +1,30 @@
+== caps_info
+selected_cap = 0
+local_src_cap(type, vmin, vmax, oper)
+local_snk_cap(type, vmin, vmax, ioper)
+== cc_high
+-1
+== device
+== local_rp_level
+Default
+== of_node
+== pd_test
+1: pr_swap
+2: dr_swap
+3: vconn_swap
+== pe_ready
+no
+== power
+== remote_state
+07
+== subsystem
+== timer
+== typec_role
+TrySNK
+== uevent
+OF_NAME=rt1711_type_c_port0
+OF_FULLNAME=/i2c@1100d000/rt1711_type_c_port0@4e
+OF_COMPATIBLE_0=cps,cps8851
+== vbus_level
+2
+== wakeup9

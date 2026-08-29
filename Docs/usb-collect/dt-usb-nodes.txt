@@ -1,0 +1,100 @@
+===== /usb-phy@11cc0000
+-- #address-cells
+-- #size-cells
+-- compatible
+
+-- name
+
+-- phandle
+-- ranges
+-- reg
+-- status
+
+-- usb-phy@11cc0800
+
+===== /usb-phy@11cc0000/usb-phy@11cc0800
+-- #phy-cells
+
+-- clock-names
+
+-- clocks
+-- mediatek,disc-host
+-- mediatek,discth
+-- mediatek,eye-term
+-- mediatek,eye-term-host
+-- mediatek,eye-vrt
+-- mediatek,eye-vrt-host
+-- mediatek,rev6
+-- mediatek,rev6-host
+-- name
+
+-- nvmem-cell-masks
+-- nvmem-cell-names
+
+-- nvmem-cells
+-- phandle
+-- reg
+-- status
+
+===== /usb0@11200000
+-- clock-names
+
+-- clocks
+-- compatible
+
+-- dr_mode
+
+-- infracg
+-- interrupt-names
+
+-- interrupts
+-- mode
+
+-- multipoint
+
+-- name
+
+-- num_eps
+
+-- pericfg
+-- phandle
+-- phys
+
+-- port
+-- reg
+-- usb-role-switch
+
+-- usb_phy_offset
+
+-- wakeup-source
+
+===== /usb0@11200000/port
+-- endpoint@0
+-- name
+
+===== /usb1p_sif@11210000
+-- compatible
+
+-- name
+
+-- reg
+===== /usb_meta
+-- compatible
+
+-- name
+
+-- phandle
+-- udc
+
+===== /usb-boost-manager
+-- compatible
+
+-- interconnect-names
+
+-- interconnects
+-- name
+
+-- phandle
+-- required-opps
+-- small-core
+-- usb-audio

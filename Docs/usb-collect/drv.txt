@@ -1,0 +1,10 @@
+charger
+mediatek,usb-boost
+mt6370-charger
+mt_usb
+mtk-extcon-usb
+mtk-tphy
+mtk-usb-meta
+musb-hdrc
+physical-memory-group-manager
+usb_phy_generic

@@ -1,0 +1,4 @@
+11200000-1120ffff : usb0@11200000
+11cc0000-11ccffff : usb0@11200000
+  11cc0000-11cc07ff : 11cc0000.usb-phy usb-phy@11cc0000
+  11cc0800-11cc08ff : phy-11cc0000.usb-phy.0 usb-phy@11cc0800
