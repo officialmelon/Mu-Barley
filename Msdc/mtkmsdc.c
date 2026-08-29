@@ -1635,26 +1635,6 @@ MtkMsdcGetResponse(
      * exercised end to end.
      */
     UNREFERENCED_PARAMETER(RawResponse);
-    if (Command->ResponseType == SdResponseTypeR2 &&
-        Command->Index == 9 &&
-        Extension->IsEmmc == FALSE &&
-        (Extension->DiagOcrValue & 0x40000000) != 0) {
-        PUCHAR Out = (PUCHAR)ResponseBuffer;
-        /*
-         * Wire response head repair: the first bytes of long responses get
-         * corrupted on this host (CID head nibble-shifted; CSD byte 0
-         * delivering 0x40 instead of 0x00).  A card whose OCR reports
-         * CCS=1 is SDHC/SDXC/SDUC and must present a CSD v2 (structure
-         * 00).  A captured structure of 01 is that head corruption; clear
-         * it so SDPORT parses the true geometry (C_SIZE 0x03b8ab =
-         * 119.5 GiB on this card) instead of a nonsense 30 KB v1 card
-         * that sdstor correctly refuses.
-         */
-        if ((Out[0] >> 6) == 1) {
-            Out[0] = (UCHAR)(Out[0] & 0x3F);
-            Extension->DiagCsdRepaired = 1;
-        }
-    }
     Extension->DiagGr2Index = Command->Index;
     Extension->DiagGr2Resp[0] = MtkMsdcRead(Extension, SDC_RESP0);
     Extension->DiagGr2Resp[1] = MtkMsdcRead(Extension, SDC_RESP1);
@@ -1663,6 +1643,26 @@ MtkMsdcGetResponse(
     RtlCopyMemory(ResponseBuffer,
                   Extension->Response,
                   sizeof(Extension->Response));
+    if (Command->ResponseType == SdResponseTypeR2 &&
+        Command->Index == 9 &&
+        Extension->IsEmmc == FALSE &&
+        (Extension->DiagOcrValue & 0x40000000) != 0) {
+        PUCHAR Out = (PUCHAR)ResponseBuffer;
+        /*
+         * Wire response head repair.  In this register image the CSD's
+         * structure byte (CSD[127:120]) is RESP3's most significant byte,
+         * i.e. Out[15].  This card delivers 0x40 there instead of 0x00 -
+         * a corrupted head bit that reclassifies the CSD as v1 with an
+         * absurd 30 KB geometry, which sdstor correctly refuses.  A card
+         * whose OCR reports CCS=1 is SDHC/SDXC/SDUC and must present a
+         * CSD v2 (structure 00); clear the two structure bits so SDPORT
+         * parses the true geometry (C_SIZE 0x03b8ab = 119.5 GiB).
+         */
+        if ((Out[15] >> 6) == 1) {
+            Out[15] = (UCHAR)(Out[15] & 0x3F);
+            Extension->DiagCsdRepaired = 1;
+        }
+    }
 }
 
 _Use_decl_annotations_
