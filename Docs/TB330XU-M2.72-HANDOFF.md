@@ -161,3 +161,82 @@ flashes; UEFI on boot_a unchanged since M2.62.
   GetResponse ~line 1427; RequestDpc follows; capture of DiagCid/DiagCsd in DPC).
 - UEFI storage: `Mu-Silicium/Silicon/MediaTek/MediaTekPkg/Drivers/MsdcDxe/MsdcDxe.c`.
 - Prior handoff (context): `Docs/TB330XU-M2.62-HANDOFF.md` on `main`.
+
+---
+
+# UPDATE: M2.73–M2.82 (2026-08-30) — READ THIS FIRST, IT SUPERSEDES THE THEORIES ABOVE
+
+## Hardware/software state now
+- Storage miniport 0.19.2.0 (windows-drivers branch, commit 793ccf3).
+- sdstor.inf (in-box 26100.1, WHQL) is drvload'd and BINDS to both card PDOs.
+- WinPE PE/base SD stack files verified byte-identical to retail 26100.1 ARM64 ISO.
+
+## CRC-verified facts (host-side, spec CRC7 validated against CMD0=0x95)
+- eMMC CMD2/CID capture is BIT-PERFECT (CRC matches): Samsung MID 0xd6, PNM "A3A562", PRV 1.1.
+- microSD CMD9/CSD capture is BIT-PERFECT (CRC matches): BUT the content = CSD v1,
+  C_SIZE=14 = 30,720 bytes — an impossible card. With byte0 corrected 0x40→0x00 the same
+  CSD is a v2 with C_SIZE 0x03b8ab = EXACTLY 119.5 GiB (the user's real 128GB card).
+- microSD CMD2/CID capture is CORRUPTED (CRC fails): bytes 3..15 decode perfectly as
+  SanDisk MID 0x03, OID "SD" (0x5344), PNM "SC128", PRV 8.0; only the first 24 bits
+  (RESP3's top 3 bytes) are nibble-garbled. Reconstructed-true CID: 03 53 44 53 43 31 32 38
+  80 d1 f3 2c 25 01 5b a5 (CRC matches with that prefix exactly).
+- The corruption is DETERMINISTIC: identical bytes on every boot across driver versions,
+  response transforms, busy-waits, and platform-config changes.
+- M2.79 (wait for SDC_STS SDCBUSY/CMDBUSY clear before reading responses): NO change.
+- M2.80 (full Mu-Silicium MsdcDxe platform config replication: PATCH_BIT2 RESPWAIT=3 +
+  CFGRESP clear + CFGCRCSTS set, MSDC TOP blocks mapped at 0x11CD0000/0x11C90000 with
+  SDC_RX_ENH_EN/PAD_*_RD_RXDLY_SEL, EMMC50_CFG0_CRCSTSSEL, PATCH_BIT1 BIT8|9, FIFO_CFG):
+  NO change. Registers byte-identical.
+- M2.82 (deliver the CRC-verified true CID/CSD heads at capture time, before ANY consumer
+  sees them — SDPORT, sdbus, diagnostics all get correct bytes): the devnode IDs and
+  problem statuses DID NOT CHANGE.
+
+## Current physical failure signature (stable)
+- eMMC (H0): PDO created as `SD\VID_00&OID_0000&PID_&REV_0.0` (ALL-ZERO CID!), sdstor binds,
+  start fails Code 10, Problem Status 0xC00000B5 (STATUS_IO_TIMEOUT). Enumeration wedges at
+  CMD3 with 1-2 requests outstanding, no error, ~30s sdbus timeout. H0 counters: iss=0xf
+  cmp=0xd last=0x3. NOTE: our own DPC capture of H0 CMD2 CID = the valid Samsung CID
+  (CRC-verified) while sdbus's PDO shows an all-zero CID.
+- microSD (H1): PDO created as `SD\VID_53&OID_4453&PID_C128&REV_13.1` (earlier boots:
+  `SD\VID_0380&OID_5344&PID_SC128&REV_8.0` — THE PUBLISHED IDs VARY BY DRIVER BUILD, and
+  every byte of every variant EXISTS IN or is a permutation/shift of our delivered
+  GetResponse buffer — sdbus DOES parse our buffer). sdstor binds, start fails Code 10,
+  Problem Status 0xC0000022 (STATUS_ACCESS_DENIED). Enumeration STOPS after CMD7 (last
+  command 0x7, all requests complete, zero errors, 4-bit @ 20-25MHz achieved).
+- The H1 request trace ends at CMD7 in EVERY boot: sdbus's discovery completes, the PDO is
+  created, sdstor binds, and sdstor's START fails BEFORE issuing any bus command (H1
+  counters stay balanced; no commands after CMD7 ever appear).
+
+## What this rules out
+- NOT the CID/CSD content: M2.82 delivered provably-correct bytes to GetResponse and the
+  failure did not change.
+- NOT a race/latch-timing: busy-wait on SDC_STS changed nothing.
+- NOT sampling/pad config: full MsdcDxe platform config replication changed nothing.
+- NOT driver binding, signing, stack versions, class filters, or start races (restart-device
+  returned OK and the failure was identical).
+
+## The remaining question — the actual blocker
+sdstor's START fails (Code 10, 0xC0000022 on microSD / 0xC00000B5 on eMMC-with-zero-CID)
+BEFORE issuing any SD command. 0xC0000022 = STATUS_ACCESS_DENIED from a storage function
+driver start. Candidates to investigate in priority order:
+1. sdstor's start path failing inside the SDBUS interface open / first property query —
+   instrument what sdstor requests and what our stack returns. The miniport has a 16-entry
+   per-host command trace ring (registry DiagH0Trace*/DiagH1Trace*) that has never been
+   dumped — dump it and the H1 iss/cmp/last counters during a failing boot.
+2. Determine whether sdbus hands sdstor the parsed CSD/CID from SDPORT's own cache (which
+   may be parsed from a DIFFERENT response view than GetResponse returns — the published
+   device IDs contain bytes that appear in shifted/permutation forms of our delivered
+   buffer, so the parse layout SDPORT expects may differ from the reference layout).
+3. The eMMC CMD3 wedge (2 outstanding requests, no completion, no error): same miniport
+   handles CMD3 for microSD fine (H1 passes CMD3) — compare the two hosts' CMD3 handling.
+4. Consider WinDbg: WinPE BCD on the SD card is under our control; a USB2 KD or a forced
+   crash dump with a dedicated dump file on the ramdisk (X:) captured to the SD after
+   reboot would give the exact failing stack.
+
+## Repo state
+- windows-drivers branch HEAD: 793ccf3 (0.19.2.0: capture-time true-head delivery).
+- Latest test images in CODEX-OUTBOX: boot-M2.82-capture-repair.wim (current),
+  boot-M2.81/80/79/78 retained as rollback.
+- Current failing boot evidence (M2.82): microSD PDO problem 0xC0000022, eMMC PDO
+  all-zero-CID problem 0xC00000B5, H1 CRC/struct/cap diagnostics show struct=0x0 after
+  repair, sdstor.inf bound to both.
