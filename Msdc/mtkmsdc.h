@@ -63,6 +63,7 @@ typedef struct _MTK_MSDC_EXTENSION {
     ULONG DiagOcrValue;
     ULONG DiagCsdRepaired;
     ULONG DiagBusyWaitUs;
+    PVOID TopBase;
     ULONG DiagTraceRequest[MTK_MSDC_TRACE_DEPTH];
     ULONG DiagTraceArgument[MTK_MSDC_TRACE_DEPTH];
 } MTK_MSDC_EXTENSION, *PMTK_MSDC_EXTENSION;

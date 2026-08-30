@@ -383,6 +383,61 @@ MtkMsdcClearAllInterrupts(
     }
 }
 
+static VOID
+MtkMsdcTopWrite(
+    _In_ PMTK_MSDC_EXTENSION Extension,
+    ULONG Offset,
+    ULONG Value
+    )
+{
+    if (Extension->TopBase != NULL) {
+        SdPortWriteRegisterUlong(Extension->TopBase, Offset, Value);
+    }
+}
+
+/*
+ * Replicates the Mu-Silicium MsdcDxe host initialization for MT6768
+ * (UseTop/AsyncFifo/BusyCheck/StopClkFix/EnhanceRx all TRUE).  The
+ * Windows-side controller ran without this configuration, and without
+ * MSDC_PATCH_BIT2's response wait count the controller latches long
+ * responses with a corrupted head - the deterministic CID/CSD byte
+ * corruption seen on every boot.
+ */
+static VOID
+MtkMsdcApplyPlatformConfig(
+    _In_ PMTK_MSDC_EXTENSION Extension
+    )
+{
+    ULONG Value;
+
+    /* StopClkFix */
+    Value = MtkMsdcRead(Extension, MSDC_PATCH_BIT1);
+    Value |= 0x300;
+    MtkMsdcWrite(Extension, MSDC_PATCH_BIT1, Value);
+
+    /* eMMC CRC status source (MsdcDxe sets this on both hosts). */
+    MtkMsdcSetBits(Extension, EMMC50_CFG0, EMMC50_CFG0_CRCSTSSEL);
+
+    /* StopClkFix FIFO valid-source selection. */
+    MtkMsdcClearBits(Extension, SDC_FIFO_CFG,
+                     SDC_FIFO_CFG_WRVALIDSEL | SDC_FIFO_CFG_RDVALIDSEL);
+
+    /* AsyncFifo: response wait count 3 clocks + status source config. */
+    Value = MtkMsdcRead(Extension, MSDC_PATCH_BIT2);
+    Value &= ~MSDC_PB2_RESPWAIT_MASK;
+    Value |= 3 << 2;
+    Value &= ~MSDC_PB2_CFGRESP;
+    Value |= MSDC_PB2_CFGCRCSTS;
+    MtkMsdcWrite(Extension, MSDC_PATCH_BIT2, Value);
+
+    /* EnhanceRx through the TOP block, then the data/CMD tune selects. */
+    MtkMsdcTopWrite(Extension, MSDC_TOP_CTRL,
+                    MSDC_TOP_SDC_RX_ENH_EN |
+                    MSDC_TOP_PAD_DAT_RD_RXDLY_SEL);
+    MtkMsdcTopWrite(Extension, MSDC_TOP_CMD,
+                    MSDC_TOP_PAD_CMD_RD_RXDLY_SEL);
+}
+
 static NTSTATUS
 MtkMsdcRecover(
     _In_ PMTK_MSDC_EXTENSION Extension
@@ -397,6 +452,7 @@ MtkMsdcRecover(
 
     Status = MtkMsdcClearFifo(Extension);
     MtkMsdcClearAllInterrupts(Extension);
+    MtkMsdcApplyPlatformConfig(Extension);
     return Status;
 }
 
@@ -1152,6 +1208,14 @@ MtkMsdcInitialize(
         Extension->IsEmmc = FALSE;
     } else {
         return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    {
+        PHYSICAL_ADDRESS TopPhysical;
+        TopPhysical.QuadPart = Extension->IsEmmc
+                                   ? MTK_MSDC_TOP0_BASE
+                                   : MTK_MSDC_TOP1_BASE;
+        Extension->TopBase = MmMapIoSpace(TopPhysical, 0x1000, MmNonCached);
     }
 
     /*
