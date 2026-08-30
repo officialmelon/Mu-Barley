@@ -604,11 +604,38 @@ MtkMsdcResponseEncoding(
     }
 }
 
+/*
+ * The MTK MSDC can assert CMDRDY while the 136-bit R2 response is still
+ * shifting into SDC_RESP (observed: registers read as zeros or partially
+ * shifted heads at CMDRDY, and they keep changing for tens of microseconds
+ * afterwards; sdbus races us for the same data, which is why published
+ * card IDs changed between boots).  Never read a response until the
+ * controller reports both datapath busy bits clear.
+ */
+static VOID
+MtkMsdcWaitResponseLatched(
+    _In_ PMTK_MSDC_EXTENSION Extension
+    )
+{
+    ULONG Poll;
+    ULONG Sts;
+
+    for (Poll = 0; Poll < 2000; Poll += 1) {
+        Sts = MtkMsdcRead(Extension, SDC_STS);
+        if ((Sts & (SDC_STS_SDCBUSY | SDC_STS_CMDBUSY)) == 0) {
+            break;
+        }
+        SdPortWait(1);
+    }
+    Extension->DiagBusyWaitUs = Poll;
+}
+
 static VOID
 MtkMsdcCaptureResponse(
     _In_ PMTK_MSDC_EXTENSION Extension
     )
 {
+    MtkMsdcWaitResponseLatched(Extension);
     Extension->Response[0] = MtkMsdcRead(Extension, SDC_RESP0);
     Extension->Response[1] = MtkMsdcRead(Extension, SDC_RESP1);
     Extension->Response[2] = MtkMsdcRead(Extension, SDC_RESP2);
