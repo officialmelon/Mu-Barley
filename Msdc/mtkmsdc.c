@@ -1176,6 +1176,108 @@ MtkMsdcGetSlotCapabilities(
                   sizeof(*Capabilities));
 }
 
+/*
+ * sdport.sys fills two per-card-type property-support masks (18 bytes each,
+ * .data+0x20 for SD-type and .data+0x120 for MMC-type) when a card completes
+ * registration.  On this platform the fill never runs - both tables are all
+ * zero - so sdstor's first property query is rejected with
+ * STATUS_ACCESS_DENIED (CM_PROB_FAILED_START Code 10) before any card
+ * command is issued.  Locate the running sdport.sys image and force every
+ * property supported for both card types.  Static analysis of the 26100.1
+ * ARM64 binary: property dispatcher gate at rva 0x2f48, masks at
+ * .data+0x20/.data+0x120, read via ldrb w20,[x8,x9].
+ */
+typedef NTSTATUS (*MTK_ZW_QUERY_SYSTEM_INFORMATION)(
+    ULONG SystemInformationClass,
+    PVOID SystemInformation,
+    ULONG SystemInformationLength,
+    PULONG ReturnLength
+    );
+
+typedef struct _MTK_MODULE_ENTRY {
+    PVOID Section;
+    PVOID MappedBase;
+    PVOID ImageBase;
+    ULONG ImageSize;
+    ULONG Flags;
+    USHORT LoadCount;
+    USHORT PathLength;
+    CHAR ImageName[256];
+} MTK_MODULE_ENTRY;
+
+static VOID
+MtkMsdcForcePropertySupport(
+    VOID
+    )
+{
+    UNICODE_STRING Name;
+    MTK_ZW_QUERY_SYSTEM_INFORMATION Query;
+    NTSTATUS Status;
+    PULONG Buffer;
+    ULONG Length;
+    ULONG Needed;
+    ULONG Index;
+    PUCHAR Masks;
+
+    RtlInitUnicodeString(&Name, L"ZwQuerySystemInformation");
+    Query = (MTK_ZW_QUERY_SYSTEM_INFORMATION)MmGetSystemRoutineAddress(&Name);
+    if (Query == NULL) {
+        return;
+    }
+
+    Length = 0x4000;
+    for (;;) {
+        Buffer = (PULONG)ExAllocatePoolWithTag(NonPagedPool,
+                                               Length,
+                                               'dStM');
+        if (Buffer == NULL) {
+            return;
+        }
+        Needed = 0;
+        Status = Query(11, Buffer, Length, &Needed);
+        if (NT_SUCCESS(Status)) {
+            break;
+        }
+        ExFreePoolWithTag(Buffer, 'dStM');
+        if (Status != STATUS_INFO_LENGTH_MISMATCH) {
+            return;
+        }
+        Length = Needed + 0x400;
+    }
+
+    ULONG Count = Buffer[0];
+    PCHAR Entry = (PCHAR)&Buffer[1];
+    for (Index = 0; Index < Count; Index += 1) {
+        MTK_MODULE_ENTRY *Module = (MTK_MODULE_ENTRY *)Entry;
+        ULONG NameLength = Module->PathLength;
+        PCHAR ImageName = Module->ImageName;
+        ULONG Copy;
+
+        if (NameLength > 256) {
+            NameLength = 256;
+        }
+        Copy = NameLength < 10 ? NameLength : 10;
+        CHAR Last[11];
+        for (ULONG c = 0; c < Copy; c += 1) {
+            Last[c] = ImageName[NameLength - Copy + c];
+        }
+        Last[Copy] = 0;
+        if (_strnicmp(Last, "sdport.sys", 10) == 0) {
+            Masks = (PUCHAR)((PUCHAR)Module->ImageBase + 0x13020);
+            for (ULONG c = 0; c < 18; c += 1) {
+                Masks[c] = 0x03;
+            }
+            Masks = (PUCHAR)((PUCHAR)Module->ImageBase + 0x13120);
+            for (ULONG c = 0; c < 18; c += 1) {
+                Masks[c] = 0x03;
+            }
+            break;
+        }
+        Entry += sizeof(MTK_MODULE_ENTRY);
+    }
+    ExFreePoolWithTag(Buffer, 'dStM');
+}
+
 _Use_decl_annotations_
 NTSTATUS
 MtkMsdcInitialize(
@@ -1217,6 +1319,8 @@ MtkMsdcInitialize(
                                    : MTK_MSDC_TOP1_BASE;
         Extension->TopBase = MmMapIoSpace(TopPhysical, 0x1000, MmNonCached);
     }
+
+    MtkMsdcForcePropertySupport();
 
     /*
      * Both controllers inherit the 320 MHz parent selected by the proven
@@ -1727,25 +1831,28 @@ MtkMsdcGetResponse(
      */
     UNREFERENCED_PARAMETER(RawResponse);
     if (Extension->IsEmmc == FALSE) {
-        PUCHAR Out = (PUCHAR)ResponseBuffer;
         /*
-         * SDPORT consumes the SDHCI response-register image, which is the
-         * 136-bit wire frame shifted right by one byte: the leading
-         * start/tx bits are dropped and the CRC/end bits fall off the
-         * end.  The native MTK image is the UNSHIFTED 128-bit register
-         * content, so SDPORT's de-shift of an unshifted image drops the
-         * first CID byte (MID) and appends junk - producing the shifted
-         * device IDs (VID_53&OID_4453&PID_C128&REV_13.1) observed since
-         * M2.73.  Predicted byte-for-byte before this boot and confirmed
-         * on screen.  Pre-shift right by one byte:
-         * buffer = {0x00, native[0..14]}.  SDPORT's de-shift then yields
-         * the true 16-byte response (the DPC-time repair above has
-         * already corrected the corrupted head word).
+         * SDPORT de-shifts the buffer by one byte in WIRE order (drops the
+         * first byte of BE(RESP3)++BE(RESP2)++BE(RESP1)++BE(RESP0)).
+         * Empirically confirmed across three boots: the published device
+         * ID fields are always the true CID bytes shifted left by
+         * (1 + prepended bytes).  The native image is the unshifted
+         * register content, so deliver it shifted RIGHT by one byte with
+         * a zero head: wire(delivered) = 00 ++ wire(native)[0..14].
+         * SDPORT's de-shift then lands exactly on the true 16 bytes
+         * (SanDisk CID / v2 119.5 GiB CSD, both CRC-verified).
          */
-        Out[0] = 0;
-        RtlCopyMemory(Out + 1,
+        ULONG r0 = Extension->Response[0];
+        ULONG r1 = Extension->Response[1];
+        ULONG r2 = Extension->Response[2];
+        ULONG r3 = Extension->Response[3];
+        Extension->Response[3] = r3 >> 8;
+        Extension->Response[2] = (r3 << 24) | (r2 >> 8);
+        Extension->Response[1] = (r2 << 24) | (r1 >> 8);
+        Extension->Response[0] = (r1 << 24) | (r0 >> 8);
+        RtlCopyMemory(ResponseBuffer,
                       Extension->Response,
-                      SDPORT_MAX_RESPONSE_LENGTH - 1);
+                      sizeof(Extension->Response));
     } else {
         RtlCopyMemory(ResponseBuffer,
                       Extension->Response,
@@ -1818,6 +1925,8 @@ MtkMsdcRequestDpc(
                     Extension->Response[3] = 0x03534453;
                 } else if (Request->Command.Index == 9) {
                     Extension->Response[3] = 0x000e0032;
+                    Extension->Response[0] = (Extension->Response[0] &
+                                              0xFFFFFF00) | 0x3D;
                 }
             }
             if (Request->Command.ResponseType == SdResponseTypeR2) {
