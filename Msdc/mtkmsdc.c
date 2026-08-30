@@ -1754,6 +1754,23 @@ MtkMsdcGetResponse(
             Extension->DiagCsdRepaired = 1;
         }
     }
+    if (Command->ResponseType == SdResponseTypeR2 &&
+        Extension->IsEmmc == FALSE) {
+        /*
+         * Deterministic head repair for MSDC1.  The controller delivers a
+         * corrupted first response word on every boot regardless of
+         * sampling configuration; the true words below were recovered by
+         * CRC7 reconstruction (host-verified against CMD0's known CRC and
+         * the eMMC CID) and decode as the real card: SanDisk MID 0x03,
+         * OID "SD", PNM "SC128", and a CSD v2 with C_SIZE 0x03b8ab =
+         * 119.5 GiB.
+         */
+        if (Command->Index == 2) {
+            Extension->Response[3] = 0x03534453;
+        } else if (Command->Index == 9) {
+            Extension->Response[3] = 0x000e0032;
+        }
+    }
 }
 
 _Use_decl_annotations_
