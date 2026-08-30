@@ -258,11 +258,8 @@ MtkMsdcQueueDiagWork(
     _In_ PMTK_MSDC_EXTENSION Extension
     )
 {
-    if (Extension->CrashdumpMode == FALSE &&
-        gMtkMsdcRegistryPath.Buffer != NULL &&
-        InterlockedCompareExchange(&Extension->DiagWorkQueued, 1, 0) == 0) {
-        ExQueueWorkItem(&Extension->DiagWorkItem, DelayedWorkQueue);
-    }
+    /* Final bring-up path: do not perform registry I/O for every request. */
+    UNREFERENCED_PARAMETER(Extension);
 }
 
 static __forceinline ULONG
@@ -1176,108 +1173,6 @@ MtkMsdcGetSlotCapabilities(
                   sizeof(*Capabilities));
 }
 
-/*
- * sdport.sys fills two per-card-type property-support masks (18 bytes each,
- * .data+0x20 for SD-type and .data+0x120 for MMC-type) when a card completes
- * registration.  On this platform the fill never runs - both tables are all
- * zero - so sdstor's first property query is rejected with
- * STATUS_ACCESS_DENIED (CM_PROB_FAILED_START Code 10) before any card
- * command is issued.  Locate the running sdport.sys image and force every
- * property supported for both card types.  Static analysis of the 26100.1
- * ARM64 binary: property dispatcher gate at rva 0x2f48, masks at
- * .data+0x20/.data+0x120, read via ldrb w20,[x8,x9].
- */
-typedef NTSTATUS (*MTK_ZW_QUERY_SYSTEM_INFORMATION)(
-    ULONG SystemInformationClass,
-    PVOID SystemInformation,
-    ULONG SystemInformationLength,
-    PULONG ReturnLength
-    );
-
-typedef struct _MTK_MODULE_ENTRY {
-    PVOID Section;
-    PVOID MappedBase;
-    PVOID ImageBase;
-    ULONG ImageSize;
-    ULONG Flags;
-    USHORT LoadCount;
-    USHORT PathLength;
-    CHAR ImageName[256];
-} MTK_MODULE_ENTRY;
-
-static VOID
-MtkMsdcForcePropertySupport(
-    VOID
-    )
-{
-    UNICODE_STRING Name;
-    MTK_ZW_QUERY_SYSTEM_INFORMATION Query;
-    NTSTATUS Status;
-    PULONG Buffer;
-    ULONG Length;
-    ULONG Needed;
-    ULONG Index;
-    PUCHAR Masks;
-
-    RtlInitUnicodeString(&Name, L"ZwQuerySystemInformation");
-    Query = (MTK_ZW_QUERY_SYSTEM_INFORMATION)MmGetSystemRoutineAddress(&Name);
-    if (Query == NULL) {
-        return;
-    }
-
-    Length = 0x4000;
-    for (;;) {
-        Buffer = (PULONG)ExAllocatePoolWithTag(NonPagedPool,
-                                               Length,
-                                               'dStM');
-        if (Buffer == NULL) {
-            return;
-        }
-        Needed = 0;
-        Status = Query(11, Buffer, Length, &Needed);
-        if (NT_SUCCESS(Status)) {
-            break;
-        }
-        ExFreePoolWithTag(Buffer, 'dStM');
-        if (Status != STATUS_INFO_LENGTH_MISMATCH) {
-            return;
-        }
-        Length = Needed + 0x400;
-    }
-
-    ULONG Count = Buffer[0];
-    PCHAR Entry = (PCHAR)&Buffer[1];
-    for (Index = 0; Index < Count; Index += 1) {
-        MTK_MODULE_ENTRY *Module = (MTK_MODULE_ENTRY *)Entry;
-        ULONG NameLength = Module->PathLength;
-        PCHAR ImageName = Module->ImageName;
-        ULONG Copy;
-
-        if (NameLength > 256) {
-            NameLength = 256;
-        }
-        Copy = NameLength < 10 ? NameLength : 10;
-        CHAR Last[11];
-        for (ULONG c = 0; c < Copy; c += 1) {
-            Last[c] = ImageName[NameLength - Copy + c];
-        }
-        Last[Copy] = 0;
-        if (_strnicmp(Last, "sdport.sys", 10) == 0) {
-            Masks = (PUCHAR)((PUCHAR)Module->ImageBase + 0x13020);
-            for (ULONG c = 0; c < 18; c += 1) {
-                Masks[c] = 0x03;
-            }
-            Masks = (PUCHAR)((PUCHAR)Module->ImageBase + 0x13120);
-            for (ULONG c = 0; c < 18; c += 1) {
-                Masks[c] = 0x03;
-            }
-            break;
-        }
-        Entry += sizeof(MTK_MODULE_ENTRY);
-    }
-    ExFreePoolWithTag(Buffer, 'dStM');
-}
-
 _Use_decl_annotations_
 NTSTATUS
 MtkMsdcInitialize(
@@ -1319,8 +1214,6 @@ MtkMsdcInitialize(
                                    : MTK_MSDC_TOP1_BASE;
         Extension->TopBase = MmMapIoSpace(TopPhysical, 0x1000, MmNonCached);
     }
-
-    MtkMsdcForcePropertySupport();
 
     /*
      * Both controllers inherit the 320 MHz parent selected by the proven
@@ -1799,7 +1692,7 @@ MtkMsdcGetResponse(
     )
 {
     PMTK_MSDC_EXTENSION Extension;
-    UCHAR RawResponse[SDPORT_MAX_RESPONSE_LENGTH];
+    ULONG SdHciResponse[4];
     Extension = (PMTK_MSDC_EXTENSION)PrivateExtension;
     RtlZeroMemory(ResponseBuffer, SDPORT_MAX_RESPONSE_LENGTH);
 
@@ -1814,50 +1707,22 @@ MtkMsdcGetResponse(
     }
 
     /*
-     * Microsoft's SDPORT reference miniport (sdhc.c, SdhcGetResponse) copies
-     * the response register space byte-by-byte in ascending order with no
-     * swap, reorder, or compaction.  SDPORT expects the RAW controller
-     * register image and performs its own wire-order assembly.
-     *
-     * SDHCI stores R2 payload bits 127:96 in RESP3 and 31:0 in RESP0 (CRC
-     * bits dropped); MT6768 MSDC stores the same 128 payload bits the same
-     * way (verified: the eMMC CID and a valid 128 GB SD CSD v2 both decode
-     * from the raw image, first word in RESP3, MSB-first).  No transform is
-     * needed here.  Both the one-byte compaction (0.10.0/0.13.0, physically
-     * failed with sdstor loaded in M2.68-M2.71) and the full byte reversal
-     * (0.12.0, failed in M2.72) corrupt the image SDPORT assembles.  The
-     * 0.9.0 straight copy predates sdstor being loaded and was never
-     * exercised end to end.
+     * MTK exposes the unshifted 128 payload bits in RESP3..RESP0.  SDPORT's
+     * reference miniport supplies the SDHCI 136-bit response-register image,
+     * where the CRC/end byte has been discarded and each register straddles
+     * two native payload words.  Convert that ABI identically for MSDC0
+     * (eMMC) and MSDC1 (SD).  Keep Extension->Response immutable: SDPORT may
+     * call GetResponse more than once for one command, so modifying the cache
+     * here would shift a response repeatedly.
      */
-    UNREFERENCED_PARAMETER(RawResponse);
-    if (Extension->IsEmmc == FALSE) {
-        /*
-         * SDPORT de-shifts the buffer by one byte in WIRE order (drops the
-         * first byte of BE(RESP3)++BE(RESP2)++BE(RESP1)++BE(RESP0)).
-         * Empirically confirmed across three boots: the published device
-         * ID fields are always the true CID bytes shifted left by
-         * (1 + prepended bytes).  The native image is the unshifted
-         * register content, so deliver it shifted RIGHT by one byte with
-         * a zero head: wire(delivered) = 00 ++ wire(native)[0..14].
-         * SDPORT's de-shift then lands exactly on the true 16 bytes
-         * (SanDisk CID / v2 119.5 GiB CSD, both CRC-verified).
-         */
-        ULONG r0 = Extension->Response[0];
-        ULONG r1 = Extension->Response[1];
-        ULONG r2 = Extension->Response[2];
-        ULONG r3 = Extension->Response[3];
-        Extension->Response[3] = r3 >> 8;
-        Extension->Response[2] = (r3 << 24) | (r2 >> 8);
-        Extension->Response[1] = (r2 << 24) | (r1 >> 8);
-        Extension->Response[0] = (r1 << 24) | (r0 >> 8);
-        RtlCopyMemory(ResponseBuffer,
-                      Extension->Response,
-                      sizeof(Extension->Response));
-    } else {
-        RtlCopyMemory(ResponseBuffer,
-                      Extension->Response,
-                      sizeof(Extension->Response));
-    }
+    SdHciResponse[3] = Extension->Response[3] >> 8;
+    SdHciResponse[2] = (Extension->Response[3] << 24) |
+                        (Extension->Response[2] >> 8);
+    SdHciResponse[1] = (Extension->Response[2] << 24) |
+                        (Extension->Response[1] >> 8);
+    SdHciResponse[0] = (Extension->Response[1] << 24) |
+                        (Extension->Response[0] >> 8);
+    RtlCopyMemory(ResponseBuffer, SdHciResponse, sizeof(SdHciResponse));
 }
 
 _Use_decl_annotations_
@@ -1913,22 +1778,6 @@ MtkMsdcRequestDpc(
                 Request->Command.ResponseType == SdResponseTypeR3) {
                 Extension->DiagOcrValue = Extension->Response[0];
             }
-            if (Request->Command.ResponseType == SdResponseTypeR2 &&
-                Extension->IsEmmc == FALSE) {
-                /*
-                 * Repair the corrupted first response word AT CAPTURE TIME,
-                 * before any consumer (diagnostics, GetResponse, SDPORT's
-                 * own cache) can see it.  M2.81 proved the GetResponse-time
-                 * repair never reached the delivered buffer.
-                 */
-                if (Request->Command.Index == 2) {
-                    Extension->Response[3] = 0x03534453;
-                } else if (Request->Command.Index == 9) {
-                    Extension->Response[3] = 0x000e0032;
-                    Extension->Response[0] = (Extension->Response[0] &
-                                              0xFFFFFF00) | 0x3D;
-                }
-            }
             if (Request->Command.ResponseType == SdResponseTypeR2) {
                 if (Request->Command.Index == 2) {
                     RtlCopyMemory(Extension->DiagCidResponse,
@@ -1940,38 +1789,6 @@ MtkMsdcRequestDpc(
                                   Extension->Response,
                                   sizeof(Extension->DiagCsdResponse));
                     MtkMsdcValidateR2(Extension, 9);
-                    if (Extension->IsEmmc == FALSE &&
-                        (Extension->DiagOcrValue & 0x40000000) != 0 &&
-                        (Extension->Response[3] >> 30) == 1) {
-                        /*
-                         * Repair at the source: RESP3's top two bits are
-                         * CSD[127:126] (structure).  An SDHC/SDXC card must
-                         * be 00; the observed 01 is the corrupted head bit.
-                         * Fix the master copy so every consumer (GetResponse
-                         * included) sees the true v2 CSD.
-                         */
-                        Extension->Response[3] &= 0x3FFFFFFF;
-                        Extension->DiagCsdRepaired = 1;
-                    }
-                }
-                if (Request->Command.Index == 2 ||
-                    Request->Command.Index == 9) {
-                    /*
-                     * Latch-timing instrument: re-read the response registers
-                     * at 25/100/300/1000 us.  The CMD2 capture has shown a
-                     * 4-bit head shift in RESP3 that CRC proves wrong, so
-                     * find when the registers hold the true bytes.
-                     */
-                    static const ULONG SnapDelayUs[4] = { 25, 100, 300, 1000 };
-                    ULONG DelayIndex;
-                    ULONG RegIndex;
-                    for (DelayIndex = 0; DelayIndex < 4; DelayIndex += 1) {
-                        SdPortWait(SnapDelayUs[DelayIndex]);
-                        for (RegIndex = 0; RegIndex < 4; RegIndex += 1) {
-                            Extension->DiagSnap[DelayIndex][RegIndex] =
-                                MtkMsdcRead(Extension, SDC_RESP0 + RegIndex * 4);
-                        }
-                    }
                 }
             }
             MtkMsdcClearBits(Extension, MSDC_INTEN, MSDC_INT_CMD_STATUS);
