@@ -240,3 +240,65 @@ driver start. Candidates to investigate in priority order:
 - Current failing boot evidence (M2.82): microSD PDO problem 0xC0000022, eMMC PDO
   all-zero-CID problem 0xC00000B5, H1 CRC/struct/cap diagnostics show struct=0x0 after
   repair, sdstor.inf bound to both.
+
+---
+
+# UPDATE 2: M2.83–M2.84 + sdport.sys static analysis (2026-08-30, later)
+
+## CRITICAL CORRECTION — the CSD/CID were never the blocker
+sdport.sys de-shifts the GetResponse buffer by one byte (SDHCI convention: drop the
+first wire byte). The "corrupted" head byte (0x40 vs 0x00) lands EXACTLY on that
+dropped byte. Verified by hand across the delivered buffers: since M2.73, SDPORT has
+parsed a CSD v2 with C_SIZE 0x03b8ab = 119.5 GiB — the card's TRUE geometry. The
+M2.83 pre-shift delivery over-corrects (double shift) — either way, the card data
+reaching the stack was never the reason sdstor fails.
+
+## THE ACTUAL BLOCKER (from sdport.sys static analysis, 26100.1 ARM64)
+- SDPORT builds the device IDs itself (format string "%s\VID_%02x&OID_%04x&PID_%s&REV_%d.%d"
+  found in sdport.sys). sdbus consumes SDPORT's parsed card structure.
+- sdstor's start queries SDBUS properties through SDPORT's property dispatcher
+  (sdport.sys rva ~0x2e60-0x3014, an 18-entry jump table matching the SDBUS_PROPERTY
+  enum SDP_MEDIA_CHANGECOUNT(0)..SDP_HPI_SUPPORTED(0x11) from ntddsd.h).
+- The dispatcher gates every property through a per-card-type SUPPORT MASK byte read
+  from two runtime tables at sdport .data +0x20 (SD-type) and +0x120 (MMC-type):
+    if ((reqbyte & 3) == 0)                      -> STATUS_ACCESS_DENIED
+    cardtype<=1 && !(reqbyte & 1)                -> STATUS_ACCESS_DENIED
+    cardtype==1 && !(reqbyte & 2)                -> STATUS_ACCESS_DENIED
+    bit2 set && a registered callback denies     -> another status
+  These tables are UNINITIALIZED (.data zeros) in the file and filled at runtime
+  when a card finishes registration.
+- ON OUR SYSTEM THE TABLES ARE ALL ZERO => sdstor's FIRST property query returns
+  STATUS_ACCESS_DENIED => CM_PROB_FAILED_START Code 10. This reproduces the exact
+  devnode statuses (0xC0000022 microSD) and explains the eMMC 0xC00000B5 separately.
+- The published device IDs varying between driver builds is explained by the same
+  de-shift model (M2.82's VID_53&OID_4453&PID_C128&REV_13.1 = de-shift(our repaired
+  buffer) byte-for-byte). IDs are cosmetic; the masks are the blocker.
+- The eMMC "all-zero CID" PDO: SDPORT read the card structure before our capture
+  populated it for that boot path.
+
+## Why the masks stay empty
+The mask fill runs when SDPORT's card state machine completes registration. Our card
+state reaches CMD7 (lastcmd=0x7) and stops; no ACMD/SCR commands ever follow. The next
+enumeration step after CMD7 is likely a bus operation (width/clock switch through
+IssueBusOperation) or the SCR read path — something in that step fails silently or is
+never invoked, so registration never completes, the masks never fill, and sdstor is
+denied. The eMMC additionally wedges at CMD3 (bounded by a sync-poll workaround).
+
+## Next steps (ranked)
+1. Dump sdport's card-structure state at failure: the state byte (card+0xD4),
+   stage markers (card+0xE4/E5/E6), ID-valid flag (card+0xC2) are reachable via a
+   forced live-kernel dump or by adding miniport diagnostics exposing them.
+2. Instrument IssueBusOperation: log every bus operation (type, parameters, result)
+   with timestamps — the stop-after-CMD7 signature suggests a bus operation or the
+   transition after it fails silently.
+3. setupapi.dev.log hunt (find.exe EXISTS in this WinPE): the log contains the exact
+   device-install failure lines for the SD devnodes. Built into M2.84 (ready, not
+   deployed): boot-M2.84-log-hunt.wim.
+4. WinDbg path remains viable via the WIM's BCD (we control it).
+
+## Binaries/analysis artifacts
+- C:\Users\braxt\TB330XU\ANALYSIS\: sdport.sys, sdbus.sys, sdstor.sys (26100.1 ARM64,
+  byte-identical to the WinPE copies) + disassembly session scripts.
+- sdstor.sys imports ONLY ntoskrnl + HAL (talks to sdbus via PnP interface query).
+- Status constants: 0xC0000022 x4 in sdstor, x3 in sdbus, x1 in sdport (the property
+  gate). sdstor propagates; sdbus/sdport construct.
