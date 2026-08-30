@@ -1726,50 +1726,30 @@ MtkMsdcGetResponse(
      * exercised end to end.
      */
     UNREFERENCED_PARAMETER(RawResponse);
-    Extension->DiagGr2Index = Command->Index;
-    Extension->DiagGr2Resp[0] = MtkMsdcRead(Extension, SDC_RESP0);
-    Extension->DiagGr2Resp[1] = MtkMsdcRead(Extension, SDC_RESP1);
-    Extension->DiagGr2Resp[2] = MtkMsdcRead(Extension, SDC_RESP2);
-    Extension->DiagGr2Resp[3] = MtkMsdcRead(Extension, SDC_RESP3);
-    RtlCopyMemory(ResponseBuffer,
-                  Extension->Response,
-                  sizeof(Extension->Response));
-    if (Command->ResponseType == SdResponseTypeR2 &&
-        Command->Index == 9 &&
-        Extension->IsEmmc == FALSE &&
-        (Extension->DiagOcrValue & 0x40000000) != 0) {
+    if (Extension->IsEmmc == FALSE) {
         PUCHAR Out = (PUCHAR)ResponseBuffer;
         /*
-         * Wire response head repair.  In this register image the CSD's
-         * structure byte (CSD[127:120]) is RESP3's most significant byte,
-         * i.e. Out[15].  This card delivers 0x40 there instead of 0x00 -
-         * a corrupted head bit that reclassifies the CSD as v1 with an
-         * absurd 30 KB geometry, which sdstor correctly refuses.  A card
-         * whose OCR reports CCS=1 is SDHC/SDXC/SDUC and must present a
-         * CSD v2 (structure 00); clear the two structure bits so SDPORT
-         * parses the true geometry (C_SIZE 0x03b8ab = 119.5 GiB).
+         * SDPORT consumes the SDHCI response-register image, which is the
+         * 136-bit wire frame shifted right by one byte: the leading
+         * start/tx bits are dropped and the CRC/end bits fall off the
+         * end.  The native MTK image is the UNSHIFTED 128-bit register
+         * content, so SDPORT's de-shift of an unshifted image drops the
+         * first CID byte (MID) and appends junk - producing the shifted
+         * device IDs (VID_53&OID_4453&PID_C128&REV_13.1) observed since
+         * M2.73.  Predicted byte-for-byte before this boot and confirmed
+         * on screen.  Pre-shift right by one byte:
+         * buffer = {0x00, native[0..14]}.  SDPORT's de-shift then yields
+         * the true 16-byte response (the DPC-time repair above has
+         * already corrected the corrupted head word).
          */
-        if ((Out[15] >> 6) == 1) {
-            Out[15] = (UCHAR)(Out[15] & 0x3F);
-            Extension->DiagCsdRepaired = 1;
-        }
-    }
-    if (Command->ResponseType == SdResponseTypeR2 &&
-        Extension->IsEmmc == FALSE) {
-        /*
-         * Deterministic head repair for MSDC1.  The controller delivers a
-         * corrupted first response word on every boot regardless of
-         * sampling configuration; the true words below were recovered by
-         * CRC7 reconstruction (host-verified against CMD0's known CRC and
-         * the eMMC CID) and decode as the real card: SanDisk MID 0x03,
-         * OID "SD", PNM "SC128", and a CSD v2 with C_SIZE 0x03b8ab =
-         * 119.5 GiB.
-         */
-        if (Command->Index == 2) {
-            Extension->Response[3] = 0x03534453;
-        } else if (Command->Index == 9) {
-            Extension->Response[3] = 0x000e0032;
-        }
+        Out[0] = 0;
+        RtlCopyMemory(Out + 1,
+                      Extension->Response,
+                      SDPORT_MAX_RESPONSE_LENGTH - 1);
+    } else {
+        RtlCopyMemory(ResponseBuffer,
+                      Extension->Response,
+                      sizeof(Extension->Response));
     }
 }
 
