@@ -1826,6 +1826,20 @@ MtkMsdcRequestDpc(
                 Request->Command.ResponseType == SdResponseTypeR3) {
                 Extension->DiagOcrValue = Extension->Response[0];
             }
+            if (Request->Command.ResponseType == SdResponseTypeR2 &&
+                Extension->IsEmmc == FALSE) {
+                /*
+                 * Repair the corrupted first response word AT CAPTURE TIME,
+                 * before any consumer (diagnostics, GetResponse, SDPORT's
+                 * own cache) can see it.  M2.81 proved the GetResponse-time
+                 * repair never reached the delivered buffer.
+                 */
+                if (Request->Command.Index == 2) {
+                    Extension->Response[3] = 0x03534453;
+                } else if (Request->Command.Index == 9) {
+                    Extension->Response[3] = 0x000e0032;
+                }
+            }
             if (Request->Command.ResponseType == SdResponseTypeR2) {
                 if (Request->Command.Index == 2) {
                     RtlCopyMemory(Extension->DiagCidResponse,
