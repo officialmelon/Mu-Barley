@@ -5,6 +5,7 @@
 #define MTK_MSDC_DATA_TIMEOUT_US    5000000UL
 #define MTK_MSDC_BUSY_TIMEOUT_US      20000UL
 #define MTK_MSDC_REGISTRY_PATH_CHARS    512UL
+#define MTK_MSDC_DIAG_SAMPLE_MASK       0xFFFUL
 
 #define MTK_MSDC_LOG(_level, _format, ...)                              \
     KdPrintEx((DPFLTR_IHVDRIVER_ID, (_level),                           \
@@ -247,6 +248,27 @@ MtkMsdcDiagWorker(
                                 &TraceValue,
                                 sizeof(TraceValue));
         }
+        /* One binary array per field keeps export size and write count fixed. */
+#define MTK_EXPORT_ARRAY(_suffix, _field) \
+        NameBuffer[0] = L'H'; \
+        NameBuffer[1] = (WCHAR)(L'0' + Extension->HostIndex); \
+        for (CharacterIndex = 0; (_suffix)[CharacterIndex] != L'\0'; CharacterIndex++) \
+            NameBuffer[2 + CharacterIndex] = (_suffix)[CharacterIndex]; \
+        NameBuffer[2 + CharacterIndex] = L'\0'; \
+        RtlInitUnicodeString(&Name, NameBuffer); \
+        (VOID)ZwSetValueKey(Key, &Name, 0, REG_BINARY, \
+                           Extension->_field, sizeof(Extension->_field))
+        MTK_EXPORT_ARRAY(L"TraceStatus", DiagTraceStatus);
+        MTK_EXPORT_ARRAY(L"TraceLength", DiagTraceLength);
+        MTK_EXPORT_ARRAY(L"TraceDirection", DiagTraceDirection);
+        MTK_EXPORT_ARRAY(L"TraceBlockCount", DiagTraceBlockCount);
+        MTK_EXPORT_ARRAY(L"TraceResponse", DiagTraceResponse);
+        MTK_EXPORT_ARRAY(L"TraceInterrupt", DiagTraceInterrupt);
+        MTK_EXPORT_ARRAY(L"ExtCsd", DiagExtCsd);
+        MTK_EXPORT_ARRAY(L"BusTestWrite", DiagBusTestWrite);
+        MTK_EXPORT_ARRAY(L"BusTestRead", DiagBusTestRead);
+        MTK_EXPORT_ARRAY(L"BusOperations", DiagBusOperations);
+#undef MTK_EXPORT_ARRAY
         ZwClose(Key);
     }
 
@@ -258,8 +280,27 @@ MtkMsdcQueueDiagWork(
     _In_ PMTK_MSDC_EXTENSION Extension
     )
 {
-    /* Final bring-up path: do not perform registry I/O for every request. */
-    UNREFERENCED_PARAMETER(Extension);
+    /*
+     * The registry export is deliberately off the normal request hot path.
+     * One snapshot writes more than two hundred values; continuously
+     * requeueing it made partition discovery contend with storage I/O.
+     * Callers request snapshots only for rare state changes, failures, or a
+     * sparse 4096-completion sample.
+     */
+    if (Extension != NULL && Extension->IsEmmc &&
+        InterlockedCompareExchange(&Extension->DiagWorkQueued, 1, 0) == 0) {
+        ExQueueWorkItem(&Extension->DiagWorkItem, DelayedWorkQueue);
+    }
+}
+
+static VOID
+MtkMsdcTraceStatus(PMTK_MSDC_EXTENSION Extension, NTSTATUS Status)
+{
+    ULONG Index = ((ULONG)Extension->DiagTraceSequence - 1) % MTK_MSDC_TRACE_DEPTH;
+    Extension->DiagTraceStatus[Index] = (ULONG)Status;
+    Extension->DiagTraceResponse[Index] = Extension->Response[0];
+    Extension->DiagTraceInterrupt[Index] =
+        SdPortReadRegisterUlong(Extension->BaseAddress, MSDC_INT);
 }
 
 static __forceinline ULONG
@@ -844,7 +885,8 @@ MtkMsdcIssueCommand(
     /*
      * MSDC0 has repeatedly failed to deliver the interrupt edge for eMMC
      * CMD3 even though every preceding command completes normally.  Do this
-     * one short command synchronously, before SDPORT records it as pending.
+     * one short command synchronously and explicitly complete the accepted
+     * request. Returning success alone does not notify SDPORT of completion.
      * This both preserves the response and guarantees that a missing edge can
      * delay enumeration for at most the miniport command timeout instead of
      * wedging sdbus for roughly 30 seconds.
@@ -860,11 +902,20 @@ MtkMsdcIssueCommand(
         Extension->DiagLastFifoStatus = MtkMsdcRead(Extension, MSDC_FIFOCS);
         Request->RequiredEvents = 0;
         Request->Status = Status;
+        MtkMsdcTraceStatus(Extension, Status);
 
         if (!NT_SUCCESS(Status)) {
             (VOID)MtkMsdcRecover(Extension);
         }
-        return Status;
+        if (InterlockedCompareExchangePointer(
+                &Extension->OutstandingRequest, NULL, Request) == Request) {
+            Extension->DiagLastCompletionStatus = (ULONG)Status;
+            InterlockedIncrement(&Extension->DiagCompleteCount);
+            SdPortCompleteRequest(Request, Status);
+            /* An accepted command is pending even if completed inline. */
+            return STATUS_PENDING;
+        }
+        return STATUS_DEVICE_PROTOCOL_ERROR;
     }
 
     MtkMsdcSetBits(Extension, MSDC_INTEN, MSDC_INT_CMD_STATUS);
@@ -1074,10 +1125,22 @@ MtkMsdcStartTransfer(
                                 Request->Command.DataBuffer,
                                 Length);
     } else {
+        if (Extension->IsEmmc && Request->Command.Index == 19 && Length == 8) {
+            RtlCopyMemory(Extension->DiagBusTestWrite, Request->Command.DataBuffer, 8);
+        }
         Status = MtkMsdcPioWrite(Extension,
                                  Request->Command.DataBuffer,
                                  Length);
     }
+    if (Extension->IsEmmc && NT_SUCCESS(Status) &&
+        Request->Command.TransferDirection == SdTransferDirectionRead) {
+        if (Request->Command.Index == 8 && Length == 512) {
+            RtlCopyMemory(Extension->DiagExtCsd, Request->Command.DataBuffer, 512);
+        } else if (Request->Command.Index == 14 && Length == 8) {
+            RtlCopyMemory(Extension->DiagBusTestRead, Request->Command.DataBuffer, 8);
+        }
+    }
+    MtkMsdcTraceStatus(Extension, Status);
     if (!NT_SUCCESS(Status)) {
         (VOID)MtkMsdcRecover(Extension);
     }
@@ -1235,7 +1298,12 @@ MtkMsdcInitialize(
     Extension->Capabilities.BaseClockFrequencyKhz =
         MTK_MSDC_SOURCE_CLOCK_HZ / 1000;
     Extension->Capabilities.PioTransferMaxThreshold = MAXULONG;
-    Extension->Capabilities.Supported.HighSpeed = 0;
+    /* MMC HS uses the same SDR divider/sampling path at our 20 MHz cap.
+     * Advertise it only on eMMC; leave the proven removable SD policy alone.
+     * SDPORT 26100 skips saving a speed for modern MMC when every optional
+     * speed is disabled, then rejects Undefined during PDO power-on.
+     */
+    Extension->Capabilities.Supported.HighSpeed = Extension->IsEmmc;
     Extension->Capabilities.Supported.BusWidth8Bit = Extension->IsEmmc;
     Extension->Capabilities.Supported.DriverTypeB = 1;
     Extension->Capabilities.Supported.Voltage33V = 1;
@@ -1281,14 +1349,14 @@ MtkMsdcInitialize(
     return STATUS_SUCCESS;
 }
 
-_Use_decl_annotations_
-NTSTATUS
-MtkMsdcIssueBusOperation(
+static NTSTATUS
+MtkMsdcExecuteBusOperation(
     PVOID PrivateExtension,
     PSDPORT_BUS_OPERATION BusOperation
     )
 {
     PMTK_MSDC_EXTENSION Extension;
+    NTSTATUS Status;
 
     if (PrivateExtension == NULL || BusOperation == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -1302,7 +1370,20 @@ MtkMsdcIssueBusOperation(
         (VOID)InterlockedExchangePointer(
             &Extension->OutstandingRequest,
             NULL);
-        return MtkMsdcRecover(Extension);
+        Status = MtkMsdcRecover(Extension);
+        if (!NT_SUCCESS(Status)) {
+            return Status;
+        }
+        /* Full reset starts a fresh card initialization. Unlike SDHCI,
+         * MSDC's controller reset preserves SDC_CFG's negotiated width.
+         * CMD0 returns MMC to one data line; restore the host baseline too.
+         * CMD/DAT recovery must preserve width (notably during bus testing).
+         */
+        if (BusOperation->Type == SdResetHw ||
+            BusOperation->Parameters.ResetType == SdResetTypeAll) {
+            return MtkMsdcSetBusWidth(Extension, SdBusWidth1Bit);
+        }
+        return STATUS_SUCCESS;
 
     case SdSetClock:
         if (BusOperation->Parameters.FrequencyKhz > MAXULONG / 1000) {
@@ -1328,6 +1409,14 @@ MtkMsdcIssueBusOperation(
                                   BusOperation->Parameters.BusWidth);
 
     case SdSetBusSpeed:
+        if (Extension->IsEmmc != FALSE &&
+            BusOperation->Parameters.BusSpeed == SdBusSpeedHigh) {
+            /* HS_TIMING is switched by SDPORT using real CMD6. MMC HS is
+             * SDR, not DDR/HS200/HS400: explicitly retain our SDR clock
+             * programming and validate clock stability, with the same cap.
+             */
+            return MtkMsdcSetClock(Extension, Extension->CurrentClockHz);
+        }
         if (BusOperation->Parameters.BusSpeed == SdBusSpeedNormal ||
             BusOperation->Parameters.BusSpeed == SdBusSpeedUndefined) {
             return STATUS_SUCCESS;
@@ -1360,6 +1449,41 @@ MtkMsdcIssueBusOperation(
     default:
         return STATUS_NOT_SUPPORTED;
     }
+}
+
+_Use_decl_annotations_
+NTSTATUS
+MtkMsdcIssueBusOperation(
+    PVOID PrivateExtension,
+    PSDPORT_BUS_OPERATION BusOperation
+    )
+{
+    PMTK_MSDC_EXTENSION Extension;
+    ULONG Sequence;
+    PULONG Record;
+    NTSTATUS Status;
+
+    if (PrivateExtension == NULL || BusOperation == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    Extension = (PMTK_MSDC_EXTENSION)PrivateExtension;
+    Sequence = (ULONG)InterlockedIncrement(&Extension->DiagBusSequence);
+    Record = Extension->DiagBusOperations[(Sequence - 1) % 64];
+    Record[0] = Sequence;
+    Record[1] = (ULONG)BusOperation->Type;
+    Record[2] = 0;
+    RtlCopyMemory(&Record[2], &BusOperation->Parameters, sizeof(ULONG));
+    Record[3] = (ULONG)STATUS_PENDING;
+    Record[4] = (ULONG)Extension->DiagTraceSequence;
+    Status = MtkMsdcExecuteBusOperation(PrivateExtension, BusOperation);
+    Record[5] = Extension->CurrentClockHz;
+    Record[6] = Extension->DiagCurrentBusWidth;
+    Record[7] = MtkMsdcRead(Extension, MSDC_CFG);
+    Record[3] = (ULONG)Status;
+    if (!NT_SUCCESS(Status)) {
+        MtkMsdcQueueDiagWork(Extension);
+    }
+    return Status;
 }
 
 _Use_decl_annotations_
@@ -1501,6 +1625,10 @@ MtkMsdcIssueRequest(
             (((ULONG)Request->Command.TransferType & 0x0f) << 14) |
             ((ULONG)Request->Command.BlockSize & 0x3fff);
         Extension->DiagTraceArgument[TraceIndex] = Request->Command.Argument;
+        Extension->DiagTraceStatus[TraceIndex] = (ULONG)STATUS_PENDING;
+        Extension->DiagTraceLength[TraceIndex] = Request->Command.Length;
+        Extension->DiagTraceDirection[TraceIndex] = (ULONG)Request->Command.TransferDirection;
+        Extension->DiagTraceBlockCount[TraceIndex] = Request->Command.BlockCount;
     }
     Extension->DiagLastRequestType = (ULONG)Request->Type;
     Extension->DiagLastCommand = Request->Command.Index;
@@ -1531,6 +1659,7 @@ MtkMsdcIssueRequest(
 
         Status = MtkMsdcIssueCommand(Extension, Request);
         if (Status != STATUS_PENDING) {
+            MtkMsdcTraceStatus(Extension, Status);
             (VOID)InterlockedCompareExchangePointer(
                 &Extension->OutstandingRequest,
                 NULL,
@@ -1562,6 +1691,7 @@ MtkMsdcIssueRequest(
             return STATUS_DEVICE_BUSY;
         }
         Status = MtkMsdcStartTransfer(Extension, Request);
+        MtkMsdcTraceStatus(Extension, Status);
         Extension->DiagLastRawInterrupt = MtkMsdcRead(Extension, MSDC_INT);
         Extension->DiagLastIntEnable = MtkMsdcRead(Extension, MSDC_INTEN);
         Extension->DiagLastSdcStatus = MtkMsdcRead(Extension, SDC_STS);
@@ -1586,7 +1716,10 @@ MtkMsdcIssueRequest(
                     NULL,
                     Request) == Request) {
                 InterlockedIncrement(&Extension->DiagCompleteCount);
-                MtkMsdcQueueDiagWork(Extension);
+                if (((ULONG)Extension->DiagCompleteCount &
+                     MTK_MSDC_DIAG_SAMPLE_MASK) == 0) {
+                    MtkMsdcQueueDiagWork(Extension);
+                }
                 SdPortCompleteRequest(Request, STATUS_SUCCESS);
                 return STATUS_SUCCESS;
             }
@@ -1658,7 +1791,7 @@ MtkMsdcValidateR2(
         Reversed[Index] =
             ((const UCHAR *)Extension->Response)[SDPORT_MAX_RESPONSE_LENGTH - 1 - Index];
     }
-    StoredCrc = (UCHAR)(Reversed[15] >> 1);
+    StoredCrc = (UCHAR)(Reversed[15] & 0xFE);
 
     if (CommandIndex == 2) {
         Extension->DiagCidCrcOk =
@@ -1667,18 +1800,27 @@ MtkMsdcValidateR2(
         Extension->DiagCsdCrcOk =
             (MtkMsdcCrc7(Reversed, 15) == StoredCrc) ? 1 : 0;
         Extension->DiagCsdStructure = Reversed[0] >> 6;
-        if (Extension->DiagCsdStructure <= 1) {
+        if (Extension->IsEmmc != FALSE || Extension->DiagCsdStructure == 0) {
             ULONG ReadBlLen = Reversed[5] & 0x0F;
             ULONG CSize = ((ULONG)(Reversed[6] & 0x03) << 10) |
                           ((ULONG)Reversed[7] << 2) |
                           (Reversed[8] >> 6);
-            ULONG_PTR Bytes = ((ULONG_PTR)(CSize + 1)) << (ReadBlLen + 2);
+            ULONG CSizeMult = ((ULONG)(Reversed[9] & 0x03) << 1) |
+                              (Reversed[10] >> 7);
+            ULONGLONG Bytes = ((ULONGLONG)(CSize + 1)) <<
+                              (ReadBlLen + CSizeMult + 2);
             Extension->DiagCsdCapKb = (ULONG)(Bytes >> 10);
-        } else {
+            /* High-capacity eMMC requires EXT_CSD SEC_COUNT, not CSD. */
+            if (Extension->IsEmmc != FALSE && CSize == 0xFFF) {
+                Extension->DiagCsdCapKb = 0;
+            }
+        } else if (Extension->DiagCsdStructure == 1) {
             ULONG CSize22 = ((ULONG)(Reversed[7] & 0x3F) << 16) |
                             ((ULONG)Reversed[8] << 8) |
                             Reversed[9];
             Extension->DiagCsdCapKb = (CSize22 + 1) * 512;
+        } else {
+            Extension->DiagCsdCapKb = 0; /* Unsupported SD CSD structure. */
         }
     }
 }
@@ -1816,6 +1958,7 @@ MtkMsdcRequestDpc(
             InterlockedIncrement(&Extension->DiagCompleteCount);
             Extension->DiagLastCompletionStatus =
                 (ULONG)Request->Status;
+            MtkMsdcTraceStatus(Extension, Request->Status);
             Extension->DiagLastRequiredEvents = Request->RequiredEvents;
             Extension->DiagLastRawInterrupt =
                 MtkMsdcRead(Extension, MSDC_INT);
@@ -1828,7 +1971,11 @@ MtkMsdcRequestDpc(
             if (Request->Status == STATUS_IO_TIMEOUT) {
                 Extension->DiagLastTimeoutStage = 3;
             }
-            MtkMsdcQueueDiagWork(Extension);
+            if (!NT_SUCCESS(Request->Status) ||
+                (((ULONG)Extension->DiagCompleteCount &
+                  MTK_MSDC_DIAG_SAMPLE_MASK) == 0)) {
+                MtkMsdcQueueDiagWork(Extension);
+            }
             SdPortCompleteRequest(Request, Request->Status);
         }
     }
@@ -1875,6 +2022,13 @@ MtkMsdcToggleEvents(
 
     Extension = (PMTK_MSDC_EXTENSION)PrivateExtension;
     InterruptMask = MtkMsdcInterruptMaskFromEvents(EventMask);
+    /*
+     * This miniport consumes data status by polling in StartTransfer.  A
+     * short read (EXT_CSD or bus test) may finish before that callback runs.
+     * Do not let a data ISR consume its latched completion/error first.
+     * Command-response interrupts remain owned by the asynchronous DPC path.
+     */
+    InterruptMask &= ~MSDC_INT_DATA_STATUS;
     if (Enable != FALSE) {
         MtkMsdcSetBits(Extension, MSDC_INTEN, InterruptMask);
     } else {
@@ -1894,6 +2048,8 @@ MtkMsdcClearEvents(
 
     Extension = (PMTK_MSDC_EXTENSION)PrivateExtension;
     InterruptMask = MtkMsdcInterruptMaskFromEvents(EventMask);
+    /* Preserve early data completion until the polling owner observes it. */
+    InterruptMask &= ~MSDC_INT_DATA_STATUS;
     if (InterruptMask != 0) {
         MtkMsdcWrite(Extension, MSDC_INT, InterruptMask);
     }

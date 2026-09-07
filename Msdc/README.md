@@ -18,9 +18,10 @@ therefore exposed through the vendor ACPI ID `MTK6768`, never `PNP0D40`.
 One signed package binds to both instances. The miniport distinguishes them by
 their translated physical register resource. It implements command/response
 handling, reset and recovery, clock division, 1/4/8-bit bus widths, multi-block
-PIO reads and writes, Auto CMD12, and SDPORT power/bus callbacks. The initial
-clock policy deliberately stays at normal speed (25 MHz maximum); high-speed,
-HS200 and UHS tuning are deferred until baseline I/O is measured on hardware.
+PIO reads and writes, and SDPORT power/bus callbacks. Auto CMD12 is deliberately
+not advertised yet. The current clock is capped at 20 MHz; DMA, HS200, UHS, and
+tuning are deferred until the conservative path is reliable enough to install
+and recover Windows safely.
 
 ## Hardware ownership contract
 
@@ -47,18 +48,40 @@ installed ARM64 MSVC tools:
 The output package is `out/ARM64/Release/package`. `Inf2Cat` validates the INF,
 and the script emits PE headers and SHA-256 hashes.
 
+## Hardware-validated state
+
+Driver `0.26.0.0` has enumerated both physical devices in Windows PE 26100.1:
+
+- MT6768 MSDC0: 115 GiB-class eMMC, 8-bit, exposed through `sdstor`.
+- MT6768 MSDC1: 119 GiB-class microSD, 4-bit, exposed through `sdstor`.
+
+The package uses the standard Microsoft SDHC sample command-policy tables.
+Responses, identities, capacities, and completion statuses come from hardware;
+there are no card-specific CID/CSD replacements or success overrides. Run
+`Test-PackageContract.ps1` after changes to check those invariants.
+
+The Android eMMC GPT currently exposes 54 partitions/volumes to Windows. A
+read-only DiskPart enumeration therefore generates tens of thousands of small
+PIO requests. Sparse diagnostic export in `0.26.0.0` reduced the measured
+DiskPart phase from about 238 seconds to 134 seconds, but this is still a
+bring-up data path rather than production performance.
+
 ## Current scope and next validation
 
 The data path is conservative synchronous polling with one outstanding SDPORT
-request and no DMA. This is intentional for first hardware enumeration and is
-functionally sufficient for Setup, though slower than the eventual interrupt +
-DMA path. Crash-dump/hibernation support, cold power ownership, resume, live
-card removal, voltage switching and tuned high-speed modes are not claimed yet.
+request and no DMA. It is sufficient for read-only enumeration, but Windows
+installation and sustained I/O have not yet been validated. Crash-dump and
+hibernation support, cold power ownership, resume, live card removal, voltage
+switching, and tuned high-speed modes are not claimed yet.
 
-The controlled first test is read enumeration of both disks in WinPE, followed
-by a small write/read/flush test on a disposable file on the microSD filesystem.
-No automated test writes the eMMC or changes its GPT. Windows Setup writes only
-after the user explicitly selects and confirms a destination.
+Before installation, validate repeated cold-boot enumeration and read-only
+access, then run a bounded write/read/flush test only on a disposable file in
+the existing microSD FAT32 filesystem. No automated test writes the eMMC or
+changes its GPT. Windows Setup must remain disabled until a destination and
+rollback plan are explicitly approved.
+
+`Decode-Trace.ps1` decodes a registry snapshot captured by the WinPE launcher.
+It is diagnostic tooling and does not alter device state.
 
 ## References
 

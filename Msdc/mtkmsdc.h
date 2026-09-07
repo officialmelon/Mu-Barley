@@ -5,7 +5,7 @@
 
 #include "mtkmsdc_regs.h"
 
-#define MTK_MSDC_TRACE_DEPTH 16
+#define MTK_MSDC_TRACE_DEPTH 64
 
 typedef struct _MTK_MSDC_EXTENSION {
     PHYSICAL_ADDRESS PhysicalBase;
@@ -66,6 +66,18 @@ typedef struct _MTK_MSDC_EXTENSION {
     PVOID TopBase;
     ULONG DiagTraceRequest[MTK_MSDC_TRACE_DEPTH];
     ULONG DiagTraceArgument[MTK_MSDC_TRACE_DEPTH];
+    ULONG DiagTraceStatus[MTK_MSDC_TRACE_DEPTH];
+    ULONG DiagTraceLength[MTK_MSDC_TRACE_DEPTH];
+    ULONG DiagTraceDirection[MTK_MSDC_TRACE_DEPTH];
+    ULONG DiagTraceBlockCount[MTK_MSDC_TRACE_DEPTH];
+    ULONG DiagTraceResponse[MTK_MSDC_TRACE_DEPTH];
+    ULONG DiagTraceInterrupt[MTK_MSDC_TRACE_DEPTH];
+    UCHAR DiagExtCsd[512];
+    ULONG DiagExtCsdStatus;
+    UCHAR DiagBusTestWrite[8];
+    UCHAR DiagBusTestRead[8];
+    volatile LONG DiagBusSequence;
+    ULONG DiagBusOperations[64][8];
 } MTK_MSDC_EXTENSION, *PMTK_MSDC_EXTENSION;
 
 DRIVER_INITIALIZE DriverEntry;

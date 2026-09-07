@@ -22,8 +22,8 @@ tuning usable; the Windows miniport does not rewrite MSDC-TOP.
 - One ACPI/INF hardware ID and one binary for both hosts.
 - Host identity determined from the translated physical base address.
 - eMMC permanently present; microSD present-at-boot until GPIO18 support.
-- Normal-speed 3.3 V operation with a 25 MHz ceiling.
-- PIO single- and multi-block reads/writes with Auto CMD12 support.
+- 3.3 V operation with a conservative 20 MHz clock ceiling.
+- PIO single- and multi-block reads/writes; Auto CMD12 is not advertised.
 - Controller reset, FIFO clearing, W1C interrupt handling and error recovery.
 - One outstanding request; no DMA and no crash-dump claim.
 
@@ -32,13 +32,15 @@ tuning usable; the Windows miniport does not rewrite MSDC-TOP.
 1. Replace inherited clock/rail/pin ownership with MT6768 clock, PMIC and GPIO
    dependencies that support D-states, cold start and resume.
 2. Add GPIO18 card-detect debounce and surprise-removal handling.
-3. Convert the conservative polling path to interrupt/DPC completion and add
-   DMA after correctness is established.
-4. Validate R2/CID/CSD response ordering against Windows traces.
+3. Add a production DMA data path; the current polling PIO path is correct but
+   far too slow while Windows probes the many Android eMMC partitions.
+4. Preserve the hardware-derived SDHCI-format R2 response conversion validated
+   by both SD and eMMC enumeration; do not add CID/CSD identity substitutions.
 5. Add eMMC HS200 and SD high-speed tuning only after normal-speed stability.
 6. Qualify flush, removal, reboot, hibernation and crash-dump behavior before
    treating eMMC as a production Windows system disk.
 
-The first deployment must enumerate and read both controllers before any
-automated write test. A write test belongs on a disposable file on microSD;
-never automate partition or raw-sector writes to eMMC.
+Both controllers now enumerate and complete read-only DiskPart discovery. The
+next validation is repeated cold-boot reads followed by a bounded file-level
+write/read/flush test on the existing microSD FAT32 filesystem. Never automate
+partition or raw-sector writes to eMMC.
