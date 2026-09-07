@@ -12,6 +12,13 @@ function Get-Policy([string]$Inf, [string]$Name) {
 if ($candidate -notmatch '(?s)\[Msdc_Service\][^\[]*AddReg=Msdc_ServiceParameters') {
     throw 'Host service does not install its command policies'
 }
+if ($candidate -notmatch '(?im)^LoadOrderGroup\s*=\s*System Bus Extender\s*$') {
+    throw 'Storage miniport load-order group is missing'
+}
+if ($candidate -notmatch '(?im)^BootFlags\s*=\s*0x00000008\s*$') {
+    throw 'Boot-volume promotion flag is missing'
+}
+Write-Output 'PASS: boot-storage load order matches the Microsoft SDHC sample'
 foreach ($name in 'SdCmdFlags','SdAppCmdFlags') {
     if ((Get-Policy $candidate $name) -ne (Get-Policy $reference $name)) {
         throw "$name differs from the Microsoft reference policy"

@@ -66,6 +66,11 @@ PIO requests. Sparse diagnostic export in `0.26.0.0` reduced the measured
 DiskPart phase from about 238 seconds to 134 seconds, but this is still a
 bring-up data path rather than production performance.
 
+Package `0.27.0.0` retains that runtime code and adds the Microsoft SD-host
+sample's `System Bus Extender` load-order group and boot-volume promotion flag.
+This metadata is required before testing a full Windows boot from MSDC-backed
+storage; enumeration alone does not validate that boot path.
+
 ## Current scope and next validation
 
 The data path is conservative synchronous polling with one outstanding SDPORT
