@@ -37,4 +37,12 @@ foreach ($forbidden in 'SC128','A3A562','25015ba5','8ef08bff','400e0032','SdPort
     if ($source -match [regex]::Escape($forbidden)) { throw "Card-specific/patch marker: $forbidden" }
 }
 Write-Output 'PASS: response cache immutable; no known card-specific replacement markers'
+$capture = [regex]::Match($source, '(?s)MtkMsdcCaptureResponse\(.*?(?=static NTSTATUS)').Value
+if ($capture -notmatch 'if \(LongResponse != FALSE\)\s*\{\s*MtkMsdcWaitResponseLatched\(Extension\);') {
+    throw 'Response settling must be restricted to R2; data commands cannot wait for FIFO idle'
+}
+if ($source -notmatch 'MtkMsdcCaptureResponse\(\s*Extension,\s*Request->Command.ResponseType == SdResponseTypeR2\)') {
+    throw 'DPC response capture must select the R2 settling path from the request type'
+}
+Write-Output 'PASS: only long R2 responses wait for datapath settling'
 Write-Output 'Static package/source checks only; hardware enumeration is NOT established by this test.'

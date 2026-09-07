@@ -726,10 +726,17 @@ MtkMsdcWaitResponseLatched(
 
 static VOID
 MtkMsdcCaptureResponse(
-    _In_ PMTK_MSDC_EXTENSION Extension
+    _In_ PMTK_MSDC_EXTENSION Extension,
+    _In_ BOOLEAN LongResponse
     )
 {
-    MtkMsdcWaitResponseLatched(Extension);
+    /* R2 needs the proven settling guard. For ordinary data commands,
+     * SDCBUSY remains set until StartTransfer drains/fills the FIFO. Waiting
+     * here stalls every read/write for 2 ms before that phase can even run. */
+    Extension->DiagBusyWaitUs = 0;
+    if (LongResponse != FALSE) {
+        MtkMsdcWaitResponseLatched(Extension);
+    }
     Extension->Response[0] = MtkMsdcRead(Extension, SDC_RESP0);
     Extension->Response[1] = MtkMsdcRead(Extension, SDC_RESP1);
     Extension->Response[2] = MtkMsdcRead(Extension, SDC_RESP2);
@@ -757,7 +764,8 @@ MtkMsdcPollCommandCompletion(
             }
 
             if ((Pending & MSDC_INT_CMDRDY) != 0) {
-                MtkMsdcCaptureResponse(Extension);
+                /* This polling path is used only for eMMC CMD3 (R1). */
+                MtkMsdcCaptureResponse(Extension, FALSE);
                 return STATUS_SUCCESS;
             }
         }
@@ -1915,7 +1923,9 @@ MtkMsdcRequestDpc(
     } else {
         Status = STATUS_SUCCESS;
         if ((Events & SDPORT_EVENT_CARD_RESPONSE) != 0) {
-            MtkMsdcCaptureResponse(Extension);
+            MtkMsdcCaptureResponse(
+                Extension,
+                Request->Command.ResponseType == SdResponseTypeR2);
             if (Request->Command.Index == 41 &&
                 Request->Command.ResponseType == SdResponseTypeR3) {
                 Extension->DiagOcrValue = Extension->Response[0];

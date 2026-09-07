@@ -73,6 +73,13 @@ storage; enumeration alone does not validate that boot path.
 
 ## Current scope and next validation
 
+Package 0.28.0.0 (M2.95) restricts the response-latch settling guard to R2.
+Previously each CMD17/18/24/25 response could wait the full 2000 microseconds
+for SDCBUSY to clear before the PIO phase that drains or fills its FIFO could
+start. Ordinary responses are now captured at the command-response event;
+the proven CID/CSD guard remains. Hardware speed measurements are pending.
+`SdPortWait` takes microseconds, not milliseconds.
+
 The data path is conservative synchronous polling with one outstanding SDPORT
 request and no DMA. It is sufficient for read-only enumeration, but Windows
 installation and sustained I/O have not yet been validated. Crash-dump and
